@@ -10,12 +10,14 @@ When `VLESS_URL` is configured, the program also starts a bundled `xray.exe` chi
 
 You can now paste the original remote VLESS share link into `VLESS_URL`. The app rewrites the Xray dial target to the local relay automatically while preserving the original VLESS transport and TLS settings from the share link.
 
+For this app to work in VLESS mode, the share link must use remote port `443`. Other VLESS remote ports are not supported by this relay flow.
+
 ## What The Program Actually Does
 
 For each incoming TCP connection:
 
 1. It listens on `LISTEN_HOST:LISTEN_PORT`.
-2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP:CONNECT_PORT`.
+2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from `VLESS_URL` when present, or from the legacy `CONNECT_PORT` fallback otherwise.
 3. It uses WinDivert through `pydivert` to watch the packets of that outbound connection.
 4. Right after the normal TCP three-way handshake, it injects an extra ACK+PSH packet that contains a synthetic TLS ClientHello.
 5. That synthetic ClientHello contains the configured `FAKE_SNI` value.
@@ -85,9 +87,9 @@ The runtime behavior is controlled by `config.json`:
 - `LISTEN_HOST`: local bind address for the relay.
 - `LISTEN_PORT`: local TCP port that clients connect to.
 - `CONNECT_IP`: fixed remote IPv4 address the program will connect to.
-- `CONNECT_PORT`: fixed remote TCP port, typically `443`.
+- `VLESS_URL`: the original VLESS share link. Its remote port is also used as the relay's upstream TCP port when this field is set, and it must be `443` for the relay flow to work.
 - `FAKE_SNI`: the decoy SNI inserted into the synthetic ClientHello.
-- `VLESS_URL`: the original VLESS share link. The app preserves its transport and TLS settings, but rewrites the actual Xray dial target to the local relay automatically.
+- `CONNECT_PORT`: optional legacy fallback port used only when `VLESS_URL` is empty. If omitted, it defaults to `443`.
 - `XRAY_BINARY_PATH`: path to the bundled Xray executable.
 - `XRAY_SOCKS_HOST` and `XRAY_SOCKS_PORT`: local SOCKS5 listen address for the Xray child process.
 - `XRAY_HTTP_HOST` and `XRAY_HTTP_PORT`: local HTTP proxy listen address for the Xray child process.

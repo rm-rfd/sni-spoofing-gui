@@ -30,6 +30,13 @@ BYPASS_METHOD = "wrong_seq"
 fake_injective_connections: dict[tuple, FakeInjectiveConnection] = {}
 
 
+def resolve_connect_port(config_data: dict[str, object]) -> int:
+    vless_url = get_config_string(config_data, "VLESS_URL", "").strip()
+    if vless_url:
+        return parse_vless_url(vless_url).port
+    return get_config_port(config_data, "CONNECT_PORT", 443)
+
+
 def load_runtime_settings() -> None:
     global config, LISTEN_HOST, LISTEN_PORT, FAKE_SNI, CONNECT_IP, CONNECT_PORT, INTERFACE_IPV4
 
@@ -46,7 +53,7 @@ def load_runtime_settings() -> None:
         raise ValueError("FAKE_SNI must not be empty")
 
     CONNECT_IP = connect_ip
-    CONNECT_PORT = get_config_port(config, "CONNECT_PORT", 443)
+    CONNECT_PORT = resolve_connect_port(config)
     FAKE_SNI = fake_sni.encode()
     INTERFACE_IPV4 = get_default_interface_ipv4(CONNECT_IP)
     if not INTERFACE_IPV4:
@@ -287,20 +294,28 @@ async def main():
 
 
 def log_line(message: str = "") -> None:
+    stdout = sys.stdout
+    line = f"{message}\n"
+
+    if hasattr(stdout, "buffer") and not stdout.isatty():
+        stdout.buffer.write(line.encode("utf-8"))
+        stdout.flush()
+        return
+
     try:
-        print(message, flush=True)
+        stdout.write(line)
+        stdout.flush()
         return
     except UnicodeEncodeError:
         pass
 
-    stdout = sys.stdout
     if not hasattr(stdout, "buffer"):
-        stdout.write(message.encode("ascii", errors="replace").decode("ascii") + "\n")
+        stdout.write(message.encode("ascii", errors="backslashreplace").decode("ascii") + "\n")
         stdout.flush()
         return
 
     encoding = stdout.encoding or "utf-8"
-    stdout.buffer.write(message.encode(encoding, errors="replace") + b"\n")
+    stdout.buffer.write(line.encode(encoding, errors="backslashreplace"))
     stdout.flush()
 
 
@@ -315,13 +330,11 @@ def run_headless() -> int:
         w_filter = "tcp and " + "(" + "(ip.SrcAddr == " + INTERFACE_IPV4 + " and ip.DstAddr == " + CONNECT_IP + ")" + " or " + "(ip.SrcAddr == " + CONNECT_IP + " and ip.DstAddr == " + INTERFACE_IPV4 + ")" + ")"
         fake_tcp_injector = FakeTcpInjector(w_filter, fake_injective_connections)
         threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
-        log_line("هشن شومافر تیامح دینکیم هدافتسا دازآ تنرتنیا هب یسرتسد یارب همانرب نیا زا رگا")
-        log_line(
-            "دراد امش تیامح هب زاین هک مراد رظن رد دازآ تنرتنیا هب ناریا مدرم مامت یسرتسد یارب یدایز یاه همانرب و اه هژورپ")
+        log_line("SNI-Spoofing Relay started.")
+        log_line(f"Listening on {LISTEN_HOST}:{LISTEN_PORT}, forwarding to {CONNECT_IP}:{CONNECT_PORT} with fake SNI={FAKE_SNI.decode(errors='replace')}")
+        log_line("اگر از این برنامه خوشتون اومد، لطفا حمایت کنید :)")
+        log_line("USDT (BEP20): 0x6411d42175578CFafadfB6b536A4C97F0f6883Aa")
         log_line()
-        log_line("USDT (BEP20): 0x76a768B53Ca77B43086946315f0BDF21156bF424")
-        log_line()
-        log_line("@patterniha")
         if xray_settings is not None:
             log_line(f"Bundled Xray started. SOCKS5 proxy: {xray_settings.socks_host}:{xray_settings.socks_port}")
             log_line(f"Bundled Xray started. HTTP proxy: {xray_settings.http_host}:{xray_settings.http_port}")

@@ -132,17 +132,17 @@ class ControlPanel(tk.Tk):
         actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         actions.columnconfigure(5, weight=1)
 
-        self.reload_button = ttk.Button(actions, text="Reload From Disk", command=self.load_form_from_disk)
-        self.reload_button.grid(row=0, column=0, padx=(0, 8))
-
-        self.save_button = ttk.Button(actions, text="Save Config", command=self.save_form_to_disk)
-        self.save_button.grid(row=0, column=1, padx=(0, 8))
-
         self.start_button = ttk.Button(actions, text="Start Relay", command=self.start_relay)
-        self.start_button.grid(row=0, column=2, padx=(0, 8))
+        self.start_button.grid(row=0, column=0, padx=(0, 8))
 
         self.stop_button = ttk.Button(actions, text="Stop Relay", command=self.stop_relay)
-        self.stop_button.grid(row=0, column=3, padx=(0, 8))
+        self.stop_button.grid(row=0, column=1, padx=(0, 8))
+
+        self.reload_button = ttk.Button(actions, text="Reload From Disk", command=self.load_form_from_disk)
+        self.reload_button.grid(row=0, column=2, padx=(0, 8))
+
+        self.save_button = ttk.Button(actions, text="Save Config", command=self.save_form_to_disk)
+        self.save_button.grid(row=0, column=3, padx=(0, 8))
 
         ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=4)
 

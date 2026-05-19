@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-APP_NAME = "SNI-Spoofing"
+APP_NAME = "SNI-Spoofing-GUI"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "main.py"
 RUNTIME_FILES = ["config.json", "README.md", "how-to-run.md", "LICENSE"]
