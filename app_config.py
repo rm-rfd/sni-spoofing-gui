@@ -11,7 +11,7 @@ XRAY_LOG_LEVELS = ("debug", "info", "warning", "error", "none")
 GUI_EDITABLE_FIELDS = (
     "CONNECT_IP",
     "FAKE_SNI",
-    "VLESS_URL",
+    "XRAY_URL",
     "XRAY_SOCKS_PORT",
     "XRAY_HTTP_PORT",
     "XRAY_LOG_LEVEL",

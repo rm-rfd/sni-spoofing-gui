@@ -11,7 +11,7 @@ import zipfile
 APP_NAME = "SNI-Spoofing-GUI"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "main.py"
-RUNTIME_FILES = ["config.json", "README.md", "LICENSE"]
+RUNTIME_FILES = ["config.json"]
 OPTIONAL_RUNTIME_FILES = []
 RUNTIME_DIRECTORIES = ["xray"]
 
@@ -136,14 +136,14 @@ def build_bundle(dist_dir: Path, build_dir: Path, *, dry_run: bool) -> None:
         "PyInstaller",
         "--noconfirm",
         "--clean",
-        "--onedir",
+        "--onefile",
         "--windowed",
         "--hidden-import",
         "gui",
         "--name",
         APP_NAME,
         "--distpath",
-        str(dist_dir),
+        str(bundle_dir),
         "--workpath",
         str(pyinstaller_work_dir),
         "--specpath",

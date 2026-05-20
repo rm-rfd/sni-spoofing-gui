@@ -69,20 +69,20 @@ def parse_xray_share_url(share_url: str) -> XrayShareProfile:
     parsed = urlparse(share_url.strip())
     protocol = parsed.scheme.lower()
     if protocol not in {"vless", "trojan"}:
-        raise XrayConfigError("VLESS_URL must start with vless:// or trojan://")
+        raise XrayConfigError("XRAY_URL must start with vless:// or trojan://")
     if not parsed.username:
         if protocol == "vless":
-            raise XrayConfigError("VLESS_URL is missing the UUID")
-        raise XrayConfigError("VLESS_URL is missing the password")
+            raise XrayConfigError("XRAY_URL is missing the UUID")
+        raise XrayConfigError("XRAY_URL is missing the password")
     if not parsed.hostname:
-        raise XrayConfigError("VLESS_URL is missing the host")
+        raise XrayConfigError("XRAY_URL is missing the host")
 
     raw_credential = unquote(parsed.username)
     if protocol == "vless":
         try:
             credential = str(uuid.UUID(raw_credential))
         except ValueError as exc:
-            raise XrayConfigError("VLESS_URL contains an invalid UUID") from exc
+            raise XrayConfigError("XRAY_URL contains an invalid UUID") from exc
     else:
         credential = raw_credential
 

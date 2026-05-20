@@ -110,23 +110,23 @@ class ControlPanel(tk.Tk):
         )
         self.log_level_combo.grid(row=2, column=1, sticky="ew", pady=6)
 
-        ttk.Label(settings_frame, text="VLESS_URL (vless:// or trojan://)").grid(row=3, column=0, sticky="nw", padx=(0, 8), pady=(10, 6))
-        vless_frame = ttk.Frame(settings_frame)
-        vless_frame.grid(row=3, column=1, columnspan=3, sticky="nsew", pady=(10, 6))
-        vless_frame.columnconfigure(0, weight=1)
-        vless_frame.rowconfigure(0, weight=1)
-        self.vless_url_text = tk.Text(
-            vless_frame,
+        ttk.Label(settings_frame, text="XRAY_URL (vless://, trojan://, ...)").grid(row=3, column=0, sticky="nw", padx=(0, 8), pady=(10, 6))
+        xray_url_frame = ttk.Frame(settings_frame)
+        xray_url_frame.grid(row=3, column=1, columnspan=3, sticky="nsew", pady=(10, 6))
+        xray_url_frame.columnconfigure(0, weight=1)
+        xray_url_frame.rowconfigure(0, weight=1)
+        self.xray_url_text = tk.Text(
+            xray_url_frame,
             height=5,
             wrap="word",
             font=("Consolas", 10),
             relief="solid",
             borderwidth=1,
         )
-        self.vless_url_text.grid(row=0, column=0, sticky="nsew")
-        vless_scrollbar = ttk.Scrollbar(vless_frame, orient="vertical", command=self.vless_url_text.yview)
-        vless_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.vless_url_text.configure(yscrollcommand=vless_scrollbar.set)
+        self.xray_url_text.grid(row=0, column=0, sticky="nsew")
+        xray_url_scrollbar = ttk.Scrollbar(xray_url_frame, orient="vertical", command=self.xray_url_text.yview)
+        xray_url_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.xray_url_text.configure(yscrollcommand=xray_url_scrollbar.set)
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
@@ -211,8 +211,11 @@ class ControlPanel(tk.Tk):
         self.socks_port_var.set(str(config.get("XRAY_SOCKS_PORT", "")))
         self.http_port_var.set(str(config.get("XRAY_HTTP_PORT", "")))
         self.log_level_var.set(str(config.get("XRAY_LOG_LEVEL", "warning")).strip().lower())
-        self.vless_url_text.delete("1.0", "end")
-        self.vless_url_text.insert("1.0", str(config.get("VLESS_URL", "")))
+        self.xray_url_text.delete("1.0", "end")
+        xray_url = str(config.get("XRAY_URL", "")).strip()
+        if not xray_url:
+            xray_url = str(config.get("VLESS_URL", ""))
+        self.xray_url_text.insert("1.0", xray_url)
         self._append_log(f"[loaded] {get_config_path()}")
 
     def _parse_port_value(self, raw_value: str, field_name: str) -> int:
@@ -229,7 +232,7 @@ class ControlPanel(tk.Tk):
 
         connect_ip = self.connect_ip_var.get().strip()
         fake_sni = self.fake_sni_var.get().strip()
-        vless_url = self.vless_url_text.get("1.0", "end").strip()
+        xray_url = self.xray_url_text.get("1.0", "end").strip()
         socks_port = self._parse_port_value(self.socks_port_var.get(), "XRAY_SOCKS_PORT")
         http_port = self._parse_port_value(self.http_port_var.get(), "XRAY_HTTP_PORT")
         log_level = normalize_xray_log_level(self.log_level_var.get())
@@ -247,7 +250,8 @@ class ControlPanel(tk.Tk):
         updated_config = dict(config)
         updated_config["CONNECT_IP"] = connect_ip
         updated_config["FAKE_SNI"] = fake_sni
-        updated_config["VLESS_URL"] = vless_url
+        updated_config["XRAY_URL"] = xray_url
+        updated_config.pop("VLESS_URL", None)
         updated_config["XRAY_SOCKS_PORT"] = socks_port
         updated_config["XRAY_HTTP_PORT"] = http_port
         updated_config["XRAY_LOG_LEVEL"] = log_level

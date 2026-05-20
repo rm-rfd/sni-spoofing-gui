@@ -31,7 +31,9 @@ fake_injective_connections: dict[tuple, FakeInjectiveConnection] = {}
 
 
 def resolve_connect_port(config_data: dict[str, object]) -> int:
-    share_url = get_config_string(config_data, "VLESS_URL", "").strip()
+    share_url = get_config_string(config_data, "XRAY_URL", "").strip()
+    if not share_url:
+        share_url = get_config_string(config_data, "VLESS_URL", "").strip()
     if share_url:
         return parse_xray_share_url(share_url).port
     return get_config_port(config_data, "CONNECT_PORT", 443)
@@ -85,7 +87,9 @@ def get_xray_relay_host() -> str:
 
 def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySettings | None]:
     ensure_runtime_settings_loaded()
-    share_url = get_config_string(config, "VLESS_URL", "").strip()
+    share_url = get_config_string(config, "XRAY_URL", "").strip()
+    if not share_url:
+        share_url = get_config_string(config, "VLESS_URL", "").strip()
     if not share_url:
         return None, None
 

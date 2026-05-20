@@ -1,4 +1,8 @@
-# SNI-Spoofing
+# SNI-Spoofing-GUI
+
+This project is built on top of the work by Patterniha: https://github.com/patterniha/SNI-Spoofing. Big thanks for the original idea and code that inspired this repository.
+
+This software is provided as-is, without any warranty or guarantee of connectivity, reliability, or fitness for any particular purpose. Use it at your own risk. The user is solely responsible for any outcomes, issues, or consequences that may arise from using this project.
 
 This project is a Windows-only local TCP relay that tries to bypass simple DPI rules by injecting a fake TLS ClientHello with a decoy SNI during the outbound TCP handshake.
 
@@ -6,9 +10,9 @@ The important detail is that the injected packet is not meant to become part of 
 
 After that fake packet is sent, the program stops packet interception for the connection and relays traffic normally between the local client and the configured upstream socket.
 
-When `VLESS_URL` is configured, the program also starts a bundled `xray.exe` child process. Xray exposes local SOCKS5 and HTTP proxy ports, and its outbound talks to this relay listener.
+When `XRAY_URL` is configured, the program also starts a bundled `xray.exe` child process. Xray exposes local SOCKS5 and HTTP proxy ports, and its outbound talks to this relay listener.
 
-You can now paste the original remote `vless://` or `trojan://` share link into `VLESS_URL`. The app rewrites the Xray dial target to the local relay automatically while preserving the original transport and TLS settings from the share link.
+You can now paste the original remote `vless://` or `trojan://` share link into `XRAY_URL`. The app rewrites the Xray dial target to the local relay automatically while preserving the original transport and TLS settings from the share link.
 
 For this app to work in share-link mode, the remote port must be `443`. Other remote ports are not supported by this relay flow.
 
@@ -17,7 +21,7 @@ For this app to work in share-link mode, the remote port must be `443`. Other re
 For each incoming TCP connection:
 
 1. It listens on `LISTEN_HOST:LISTEN_PORT`.
-2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from `VLESS_URL` when present, or from the legacy `CONNECT_PORT` fallback otherwise.
+2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from `XRAY_URL` when present, or from the legacy `CONNECT_PORT` fallback otherwise.
 3. It uses WinDivert through `pydivert` to watch the packets of that outbound connection.
 4. Right after the normal TCP three-way handshake, it injects an extra ACK+PSH packet that contains a synthetic TLS ClientHello.
 5. That synthetic ClientHello contains the configured `FAKE_SNI` value.
@@ -50,7 +54,7 @@ The current codebase is intentionally narrow:
 - Only one fake SNI is configured for the whole process.
 - The program forwards to one configured upstream endpoint, not many.
 - There is no UDP or QUIC support.
-- SOCKS, HTTP, and supported Xray share links are handled by the bundled Xray child process when `VLESS_URL` is configured.
+- SOCKS, HTTP, and supported Xray share links are handled by the bundled Xray child process when `XRAY_URL` is configured.
 
 ## How The Code Is Organized
 
@@ -73,7 +77,7 @@ The runtime behavior is controlled by `config.json`:
   "CONNECT_IP": "188.114.98.0",
   "CONNECT_PORT": 443,
   "FAKE_SNI": "auth.vercel.com",
-  "VLESS_URL": "vless://<uuid>@server.example:443?...",
+  "XRAY_URL": "vless://<uuid>@server.example:443?...",
   "XRAY_BINARY_PATH": "xray\\xray.exe",
   "XRAY_SOCKS_HOST": "127.0.0.1",
   "XRAY_SOCKS_PORT": 10908,
@@ -87,9 +91,9 @@ The runtime behavior is controlled by `config.json`:
 - `LISTEN_HOST`: local bind address for the relay.
 - `LISTEN_PORT`: local TCP port that clients connect to.
 - `CONNECT_IP`: fixed remote IPv4 address the program will connect to.
-- `VLESS_URL`: the original Xray share link. `vless://` and `trojan://` are supported. Its remote port is also used as the relay's upstream TCP port when this field is set, and it must be `443` for the relay flow to work.
+- `XRAY_URL`: the original Xray share link. `vless://`, `trojan://`, and other supported Xray share URLs are accepted. Its remote port is also used as the relay's upstream TCP port when this field is set, and it must be `443` for the relay flow to work.
 - `FAKE_SNI`: the decoy SNI inserted into the synthetic ClientHello.
-- `CONNECT_PORT`: optional legacy fallback port used only when `VLESS_URL` is empty. If omitted, it defaults to `443`.
+- `CONNECT_PORT`: optional legacy fallback port used only when `XRAY_URL` is empty. If omitted, it defaults to `443`.
 - `XRAY_BINARY_PATH`: path to the bundled Xray executable.
 - `XRAY_SOCKS_HOST` and `XRAY_SOCKS_PORT`: local SOCKS5 listen address for the Xray child process.
 - `XRAY_HTTP_HOST` and `XRAY_HTTP_PORT`: local HTTP proxy listen address for the Xray child process.
@@ -102,7 +106,7 @@ The control panel edits these fields directly in `config.json`:
 
 - `CONNECT_IP`
 - `FAKE_SNI`
-- `VLESS_URL`
+- `XRAY_URL`
 - `XRAY_SOCKS_PORT`
 - `XRAY_HTTP_PORT`
 - `XRAY_LOG_LEVEL`
@@ -138,7 +142,7 @@ If you want the previous console-only behavior, run:
 python main.py --headless
 ```
 
-If `VLESS_URL` is configured, the app starts bundled Xray and exposes these local proxies from the configured values:
+If `XRAY_URL` is configured, the app starts bundled Xray and exposes these local proxies from the configured values:
 
 - SOCKS5: `XRAY_SOCKS_HOST:XRAY_SOCKS_PORT`
 - HTTP: `XRAY_HTTP_HOST:XRAY_HTTP_PORT`
@@ -147,7 +151,7 @@ Applications can use those proxy ports directly without running V2rayN.
 
 The relay still listens on `LISTEN_HOST:LISTEN_PORT`, and Xray reaches it through `XRAY_RELAY_HOST:LISTEN_PORT`.
 
-When `VLESS_URL` contains the original remote host and port, the app rewrites Xray to dial `XRAY_RELAY_HOST:LISTEN_PORT` instead. This means you no longer need to manually edit the share link to `127.0.0.1:40443`.
+When `XRAY_URL` contains the original remote host and port, the app rewrites Xray to dial `XRAY_RELAY_HOST:LISTEN_PORT` instead. This means you no longer need to manually edit the share link to `127.0.0.1:40443`.
 
 Important operational notes:
 
