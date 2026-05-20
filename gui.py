@@ -5,6 +5,7 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -34,6 +35,7 @@ class ControlPanel(tk.Tk):
         self.process: subprocess.Popen[str] | None = None
         self.delay_test_in_progress = False
         self.log_queue: queue.Queue[tuple] = queue.Queue()
+        self.runtime_config_path: Path | None = None
 
         self.connect_ip_var = tk.StringVar()
         self.fake_sni_var = tk.StringVar()
@@ -150,7 +152,7 @@ class ControlPanel(tk.Tk):
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        actions.columnconfigure(6, weight=1)
+        actions.columnconfigure(4, weight=1)
 
         self.start_button = ttk.Button(actions, text="Start Relay", command=self.start_relay)
         self.start_button.grid(row=0, column=0, padx=(0, 8))
@@ -161,16 +163,10 @@ class ControlPanel(tk.Tk):
         self.test_delay_button = ttk.Button(actions, text="Test Delay", command=self.test_delay)
         self.test_delay_button.grid(row=0, column=2, padx=(0, 8))
 
-        self.reload_button = ttk.Button(actions, text="Reload From Disk", command=self.load_form_from_disk)
-        self.reload_button.grid(row=0, column=3, padx=(0, 8))
-
-        self.save_button = ttk.Button(actions, text="Save Config", command=self.save_form_to_disk)
-        self.save_button.grid(row=0, column=4, padx=(0, 8))
-
-        ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=5)
+        ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=3)
 
         ttk.Label(actions, textvariable=self.status_var, foreground="#1d4ed8").grid(
-            row=0, column=6, sticky="e"
+            row=0, column=4, sticky="e"
         )
 
         logs_frame = ttk.LabelFrame(container, text="Relay Logs", padding=12)
@@ -367,16 +363,12 @@ class ControlPanel(tk.Tk):
 
         if is_busy:
             self.test_delay_button.state(["disabled"])
-            self.reload_button.state(["disabled"])
-            self.save_button.state(["disabled"])
             return
 
         if is_running:
             self.test_delay_button.state(["disabled"])
         else:
             self.test_delay_button.state(["!disabled"])
-        self.reload_button.state(["!disabled"])
-        self.save_button.state(["!disabled"])
 
     def _is_process_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -395,7 +387,7 @@ class ControlPanel(tk.Tk):
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
-    def load_form_from_disk(self) -> None:
+    def load_form_from_disk(self, *, show_log: bool = False) -> None:
         try:
             config = load_config()
         except Exception as exc:
@@ -412,7 +404,8 @@ class ControlPanel(tk.Tk):
         if not xray_url:
             xray_url = str(config.get("VLESS_URL", ""))
         self.xray_url_text.insert("1.0", xray_url)
-        self._append_log("[loaded] config reloaded from disk")
+        if show_log:
+            self._append_log("[loaded] config loaded from disk")
 
     def _parse_port_value(self, raw_value: str, field_name: str) -> int:
         try:
@@ -453,18 +446,18 @@ class ControlPanel(tk.Tk):
         updated_config["XRAY_LOG_LEVEL"] = log_level
         return updated_config
 
-    def save_form_to_disk(self, *, show_message: bool = True) -> bool:
-        try:
-            updated_config = self._build_updated_config()
-            save_config(updated_config)
-        except Exception as exc:
-            messagebox.showerror("Invalid Configuration", str(exc), parent=self)
-            return False
+    def _cleanup_runtime_config(self) -> None:
+        if self.runtime_config_path is None:
+            return
 
-        self._append_log("[saved] config written to disk")
-        if show_message:
-            messagebox.showinfo("Config Saved", "The selected fields were saved.", parent=self)
-        return True
+        self.runtime_config_path.unlink(missing_ok=True)
+        self.runtime_config_path = None
+
+    def _write_runtime_config(self, config: dict[str, object]) -> Path:
+        with tempfile.NamedTemporaryFile(suffix=".json", prefix="sni-spoofing-gui-", delete=False) as temp_file:
+            runtime_config_path = Path(temp_file.name)
+        save_config(config, str(runtime_config_path))
+        return runtime_config_path
 
     def _build_headless_command(self) -> list[str]:
         if getattr(sys, "frozen", False):
@@ -475,10 +468,18 @@ class ControlPanel(tk.Tk):
         if self._is_process_running():
             messagebox.showinfo("Relay Running", "Stop the current relay before starting a new one.", parent=self)
             return
-        if not self.save_form_to_disk(show_message=False):
+
+        try:
+            runtime_config = self._build_updated_config()
+        except Exception as exc:
+            messagebox.showerror("Invalid Configuration", str(exc), parent=self)
             return
 
+        self._cleanup_runtime_config()
+        runtime_config_path = self._write_runtime_config(runtime_config)
+
         command = self._build_headless_command()
+        command.extend(["--config", str(runtime_config_path)])
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -498,14 +499,17 @@ class ControlPanel(tk.Tk):
                 creationflags=creationflags,
             )
         except Exception as exc:
+            runtime_config_path.unlink(missing_ok=True)
             self.process = None
             messagebox.showerror("Failed To Start Relay", str(exc), parent=self)
             return
 
+        self.runtime_config_path = runtime_config_path
         self.status_var.set(f"Running (PID {self.process.pid})")
         self._sync_button_state()
         self._append_log("")
         self._append_log(f"[start] {subprocess.list2cmdline(command)}")
+        self._append_log(f"[start] runtime config: {runtime_config_path}")
         self._append_log(f"[pid] {self.process.pid}")
 
         threading.Thread(target=self._read_process_output, args=(self.process,), daemon=True).start()
@@ -594,6 +598,7 @@ class ControlPanel(tk.Tk):
     def _handle_process_exit(self, process: subprocess.Popen[str], return_code: int) -> None:
         if self.process is process:
             self.process = None
+            self._cleanup_runtime_config()
             self.status_var.set(f"Stopped (exit {return_code})")
             self._sync_button_state()
         self._append_log(f"[exit] relay exited with code {return_code}")
@@ -657,6 +662,7 @@ class ControlPanel(tk.Tk):
             except Exception:
                 pass
             self.process = None
+        self._cleanup_runtime_config()
         self.destroy()
 
 

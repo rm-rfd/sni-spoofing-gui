@@ -41,7 +41,7 @@ In short: this is not rewriting the real TLS handshake in transit. It is sending
 
 The upstream destination is fixed in `config.json`, so every accepted local connection is forwarded to the same remote IP and port.
 
-The app now also ships with a small desktop control panel. It edits the most common runtime fields in `config.json`, starts and stops the relay, can run a V2rayN-style delay test, and shows live process output in one window.
+The app now also ships with a small desktop control panel. It loads the most common runtime fields from `config.json`, starts and stops the relay, can run a V2rayN-style delay test, and shows live process output in one window.
 
 ## Current Implementation Limits
 
@@ -101,7 +101,7 @@ The runtime behavior is controlled by `config.json`:
 
 `FAKE_SNI` is the spoofed value shown in the fake packet. It is not used for DNS resolution and it does not change which remote IP the socket connects to.
 
-The control panel edits these fields directly in `config.json`:
+The control panel loads these fields from `config.json` when it opens:
 
 - `CONNECT_IP`
 - `FAKE_SNI`
@@ -109,6 +109,8 @@ The control panel edits these fields directly in `config.json`:
 - `XRAY_SOCKS_PORT`
 - `XRAY_HTTP_PORT`
 - `XRAY_LOG_LEVEL`
+
+Starting the relay or running a delay test uses the current form values for that session only. The GUI does not rewrite `config.json`; if you want a persistent change, edit the file directly.
 
 ## Requirements
 
@@ -133,7 +135,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-That command now opens the desktop control panel. From there you can save the selected config fields, start or stop the relay, run a delay probe, and inspect logs without opening `config.json` in a text editor.
+That command now opens the desktop control panel. From there you can start or stop the relay, run a delay probe, and inspect logs without opening a separate console window.
 
 If you want the previous console-only behavior, run:
 
