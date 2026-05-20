@@ -217,7 +217,7 @@ class ControlPanel(tk.Tk):
         header = ttk.Frame(container)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="SNI-Spoofing-GUI", font=("Segoe UI Semibold", 18)).grid(
+        ttk.Label(header, text="RM SNI Spoofer", font=("Segoe UI Semibold", 18)).grid(
             row=0, column=0, sticky="w"
         )
         ttk.Button(header, text="نحوه اجرا", command=self._show_how_to_run_dialog).grid(
@@ -1143,7 +1143,7 @@ class ControlPanel(tk.Tk):
         self.runtime_config_path = None
 
     def _write_runtime_config(self, config: dict[str, object]) -> Path:
-        with tempfile.NamedTemporaryFile(suffix=".json", prefix="sni-spoofing-gui-", delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(suffix=".json", prefix="rm-sni-spoofer-", delete=False) as temp_file:
             runtime_config_path = Path(temp_file.name)
         save_config(config, str(runtime_config_path))
         return runtime_config_path

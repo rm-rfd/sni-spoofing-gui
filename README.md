@@ -1,4 +1,4 @@
-# SNI-Spoofing-GUI
+# RM SNI Spoofer
 
 This project is built on top of the work by Patterniha: https://github.com/patterniha/SNI-Spoofing. Big thanks for the original idea and code that inspired this repository.
 
@@ -210,9 +210,9 @@ python build.py --force-connect-port
 
 That flag only changes the bundled `config.json` placed beside the exe. It does not rewrite your source `config.json` in the repository.
 
-The output bundle is written to `dist\\SNI-Spoofing-GUI\\`.
+The output bundle is written to `dist\\RM SNI Spoofer\\`.
 
-The bundled executable opens the control panel by default. Use `SNI-Spoofing-GUI.exe --headless` if you need the relay without the GUI.
+The bundled executable opens the control panel by default. Use `RM SNI Spoofer.exe --headless` if you need the relay without the GUI.
 
 ## Why This Can Work
 

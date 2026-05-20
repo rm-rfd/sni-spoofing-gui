@@ -54,7 +54,7 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($releaseName)) {
             $releaseName = $tagName
           }
-          $zipName = "SNI-Spoofing-GUI-$tagName.zip"
+          $zipName = "RM SNI Spoofer-$tagName.zip"
           "tag_name=$tagName" >> $env:GITHUB_OUTPUT
           "release_name=$releaseName" >> $env:GITHUB_OUTPUT
           "zip_name=$zipName" >> $env:GITHUB_OUTPUT
@@ -76,7 +76,7 @@ jobs:
             if ($archive.Entries.Count -eq 0) {
               throw 'Release zip is empty.'
             }
-            $nestedRoot = 'SNI-Spoofing-GUI/'
+            $nestedRoot = 'RM SNI Spoofer/'
             foreach ($entry in $archive.Entries) {
               if ($entry.FullName.StartsWith($nestedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "Release zip contains nested root folder: $($entry.FullName)"

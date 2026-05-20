@@ -9,11 +9,11 @@ import sys
 import zipfile
 
 
-APP_NAME = "SNI-Spoofing-GUI"
+APP_NAME = "RM SNI Spoofer"
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "main.py"
-RUNTIME_FILES = ["config.json", "logo.ico"]
-OPTIONAL_RUNTIME_FILES = ["logo.png"]
+RUNTIME_FILES = ["config.json"]
+OPTIONAL_RUNTIME_FILES = []
 RUNTIME_DIRECTORIES = ["xray"]
 APP_ICON_PATH = PROJECT_ROOT / "logo.ico"
 
