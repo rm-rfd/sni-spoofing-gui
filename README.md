@@ -21,7 +21,7 @@ For this app to work in share-link mode, the remote port must be `443`. Other re
 For each incoming TCP connection:
 
 1. It listens on `LISTEN_HOST:LISTEN_PORT`.
-2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from the active Xray profile when present, or from the legacy `CONNECT_PORT` fallback otherwise.
+2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from the active Xray profile when present, or from the `CONNECT_PORT` fallback otherwise.
 3. It uses WinDivert through `pydivert` to watch the packets of that outbound connection.
 4. Right after the normal TCP three-way handshake, it injects an extra ACK+PSH packet that contains a synthetic TLS ClientHello.
 5. That synthetic ClientHello contains the configured `FAKE_SNI` value.
@@ -107,7 +107,7 @@ The runtime behavior is controlled by `config.json`:
 - `XRAY_PROFILES`: persisted list of direct `vless://` or `trojan://` share links shown in the GUI table. Each row stores the raw URL plus derived metadata such as `tag`, `protocol`, `address`, `port`, `transport`, and `security`.
 - `XRAY_ACTIVE_PROFILE_ID`: id of the active row in the GUI. `Start Relay` always uses this row only.
 - `FAKE_SNI`: the decoy SNI inserted into the synthetic ClientHello.
-- `CONNECT_PORT`: optional legacy fallback port used only when no active profile is available. If omitted, it defaults to `443`.
+- `CONNECT_PORT`: optional fallback port used only when no active profile is available. If omitted, it defaults to `443`.
 - `XRAY_BINARY_PATH`: path to the bundled Xray executable.
 - `XRAY_SOCKS_PORT`: local SOCKS5 listen port for the Xray child process. The host is always `127.0.0.1`.
 - `XRAY_HTTP_PORT`: local HTTP proxy listen port for the Xray child process. The host is always `127.0.0.1`.

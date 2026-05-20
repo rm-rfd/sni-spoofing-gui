@@ -50,13 +50,6 @@ def save_config(config: dict[str, Any], config_path: str | None = None) -> None:
         config_file.write("\n")
 
 
-def get_legacy_xray_url(config: dict[str, Any]) -> str:
-    share_url = get_config_string(config, "XRAY_URL", "").strip()
-    if share_url:
-        return share_url
-    return get_config_string(config, "VLESS_URL", "").strip()
-
-
 def build_xray_profile_record(
     share_url: str,
     *,
@@ -110,14 +103,10 @@ def get_active_xray_profile(config: dict[str, Any]) -> dict[str, Any] | None:
 
 def get_active_xray_share_url(
     config: dict[str, Any],
-    *,
-    allow_legacy_fallback: bool = True,
 ) -> str:
     active_profile = get_active_xray_profile(config)
     if active_profile is not None:
         return str(active_profile["url"])
-    if allow_legacy_fallback:
-        return get_legacy_xray_url(config)
     return ""
 
 
@@ -147,8 +136,6 @@ def replace_xray_profiles(
     updated_config[XRAY_ACTIVE_PROFILE_ID_KEY] = (
         "" if resolved_active_profile is None else resolved_active_profile["id"]
     )
-    updated_config.pop("XRAY_URL", None)
-    updated_config.pop("VLESS_URL", None)
     return normalize_config(updated_config)
 
 
@@ -157,27 +144,14 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     raw_profiles = normalized_config.get(XRAY_PROFILES_KEY)
 
     if raw_profiles is None:
-        profiles = _migrate_legacy_xray_url(normalized_config)
+        profiles = []
     else:
         profiles = _normalize_xray_profiles(raw_profiles)
 
     active_profile = _resolve_active_xray_profile(normalized_config, profiles)
     normalized_config[XRAY_PROFILES_KEY] = profiles
     normalized_config[XRAY_ACTIVE_PROFILE_ID_KEY] = "" if active_profile is None else active_profile["id"]
-    normalized_config.pop("XRAY_URL", None)
-    normalized_config.pop("VLESS_URL", None)
     return normalized_config
-
-
-def _migrate_legacy_xray_url(config: dict[str, Any]) -> list[dict[str, Any]]:
-    legacy_share_url = get_legacy_xray_url(config)
-    if not legacy_share_url:
-        return []
-
-    try:
-        return [build_xray_profile_record(legacy_share_url)]
-    except ValueError:
-        return []
 
 
 def _normalize_xray_profiles(raw_profiles: Any) -> list[dict[str, Any]]:

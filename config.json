@@ -4,19 +4,8 @@
   "CONNECT_IP": "104.19.229.21",
   "CONNECT_PORT": 443,
   "FAKE_SNI": "www.hcaptcha.com",
-  "XRAY_PROFILES": [
-    {
-      "id": "primaryprofile",
-      "url": "vless://9863e1a5-f83b-4608-bed8-122d0a54b6d5@interim.yhbj.store:443?encryption=none&security=tls&sni=interim.yhbj.store&fp=chrome&alpn=h3%2Ch2%2Chttp%2F1.1&insecure=0&allowInsecure=0&type=xhttp&host=interim.yhbj.store&path=%2FKtBrKmKh&mode=auto#sni-spoof-config",
-      "tag": "sni-spoof-config",
-      "protocol": "vless",
-      "address": "interim.yhbj.store",
-      "port": 443,
-      "transport": "xhttp",
-      "security": "tls"
-    }
-  ],
-  "XRAY_ACTIVE_PROFILE_ID": "primaryprofile",
+  "XRAY_PROFILES": [],
+  "XRAY_ACTIVE_PROFILE_ID": "",
   "XRAY_BINARY_PATH": "xray\\xray.exe",
   "XRAY_SOCKS_PORT": 10908,
   "XRAY_HTTP_PORT": 10909,
