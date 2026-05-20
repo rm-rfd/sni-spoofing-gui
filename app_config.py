@@ -110,6 +110,16 @@ def get_active_xray_share_url(
     return ""
 
 
+def resolve_connect_port(config: dict[str, Any]) -> int:
+    if get_config_bool(config, "FORCE_CONNECT_PORT", False):
+        return get_config_port(config, "CONNECT_PORT", 443)
+
+    share_url = get_active_xray_share_url(config)
+    if share_url:
+        return parse_xray_share_url(share_url).port
+    return get_config_port(config, "CONNECT_PORT", 443)
+
+
 def replace_xray_profiles(
     config: dict[str, Any],
     profiles: list[dict[str, Any]],
@@ -218,6 +228,19 @@ def get_config_port(config: dict[str, Any], name: str, default: int) -> int:
     if port < 1 or port > 65535:
         raise ValueError(f"{name} must be between 1 and 65535")
     return port
+
+
+def get_config_bool(config: dict[str, Any], name: str, default: bool = False) -> bool:
+    value = config.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def normalize_xray_log_level(raw_value: str) -> str:

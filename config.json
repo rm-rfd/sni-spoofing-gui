@@ -2,6 +2,7 @@
   "LISTEN_HOST": "0.0.0.0",
   "LISTEN_PORT": 40443,
   "CONNECT_IP": "104.19.229.21",
+  "FORCE_CONNECT_PORT": true,
   "CONNECT_PORT": 443,
   "FAKE_SNI": "www.hcaptcha.com",
   "XRAY_PROFILES": [],

@@ -9,7 +9,7 @@ import threading
 
 # from utils.proxy_protocols import parse_vless_protocol
 from app_config import get_app_dir, get_config_port, get_config_string, load_config
-from app_config import get_active_xray_share_url
+from app_config import get_active_xray_share_url, resolve_connect_port
 from utils.network_tools import get_default_interface_ipv4
 from utils.packet_templates import ClientHelloMaker
 from utils.xray import XrayLocalProxySettings, XrayProcessManager, build_xray_config, parse_xray_share_url
@@ -30,13 +30,6 @@ BYPASS_METHOD = "wrong_seq"
 ##################
 
 fake_injective_connections: dict[tuple, FakeInjectiveConnection] = {}
-
-
-def resolve_connect_port(config_data: dict[str, object]) -> int:
-    share_url = get_active_xray_share_url(config_data)
-    if share_url:
-        return parse_xray_share_url(share_url).port
-    return get_config_port(config_data, "CONNECT_PORT", 443)
 
 
 def load_runtime_settings(config_path: str | None = None) -> None:

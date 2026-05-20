@@ -14,14 +14,14 @@ When an active Xray profile is configured, the program also starts a bundled `xr
 
 In GUI mode, you can store multiple direct `vless://` or `trojan://` share links in an `XRAY Profiles` table, mark one row as active, and run delay tests for one or many selected rows. The app rewrites only the active share link's dial target to the local relay while preserving the original transport and TLS settings from the share link.
 
-For this app to work in share-link mode, the remote port must be `443`. Other remote ports are not supported by this relay flow.
+For this app to work in share-link mode, the remote port must be `443`. Other remote ports are not supported by this relay flow. If you need to keep importing legacy share links that still contain a different port, enable `FORCE_CONNECT_PORT` so the relay ignores the URL port and always uses `CONNECT_PORT` instead.
 
 ## What The Program Actually Does
 
 For each incoming TCP connection:
 
 1. It listens on `LISTEN_HOST:LISTEN_PORT`.
-2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from the active Xray profile when present, or from the `CONNECT_PORT` fallback otherwise.
+2. It opens a real outbound TCP connection to the fixed upstream target `CONNECT_IP` on the port derived from the active Xray profile when present, unless `FORCE_CONNECT_PORT` is enabled. When `FORCE_CONNECT_PORT` is `true`, the relay always uses `CONNECT_PORT` and ignores the active profile port.
 3. It uses WinDivert through `pydivert` to watch the packets of that outbound connection.
 4. Right after the normal TCP three-way handshake, it injects an extra ACK+PSH packet that contains a synthetic TLS ClientHello.
 5. That synthetic ClientHello contains the configured `FAKE_SNI` value.
@@ -79,6 +79,7 @@ The runtime behavior is controlled by `config.json`:
   "LISTEN_PORT": 40443,
   "CONNECT_IP": "188.114.98.0",
   "CONNECT_PORT": 443,
+  "FORCE_CONNECT_PORT": false,
   "FAKE_SNI": "auth.vercel.com",
   "XRAY_PROFILES": [
     {
@@ -107,7 +108,8 @@ The runtime behavior is controlled by `config.json`:
 - `XRAY_PROFILES`: persisted list of direct `vless://` or `trojan://` share links shown in the GUI table. Each row stores the raw URL plus derived metadata such as `tag`, `protocol`, `address`, `port`, `transport`, and `security`.
 - `XRAY_ACTIVE_PROFILE_ID`: id of the active row in the GUI. `Start Relay` always uses this row only.
 - `FAKE_SNI`: the decoy SNI inserted into the synthetic ClientHello.
-- `CONNECT_PORT`: optional fallback port used only when no active profile is available. If omitted, it defaults to `443`.
+- `CONNECT_PORT`: fallback port used when no active profile is available, or always used when `FORCE_CONNECT_PORT` is `true`. If omitted, it defaults to `443`.
+- `FORCE_CONNECT_PORT`: optional boolean. When `true`, the relay ignores the active share URL port and always connects to `CONNECT_IP:CONNECT_PORT`.
 - `XRAY_BINARY_PATH`: path to the bundled Xray executable.
 - `XRAY_SOCKS_PORT`: local SOCKS5 listen port for the Xray child process. The host is always `127.0.0.1`.
 - `XRAY_HTTP_PORT`: local HTTP proxy listen port for the Xray child process. The host is always `127.0.0.1`.
@@ -199,6 +201,14 @@ To build a distributable folder that already contains the exe, `config.json`, an
 pip install -r requirements-build.txt
 python build.py
 ```
+
+If you want the built bundle to ignore legacy share-link ports and always use `CONNECT_PORT`, build with:
+
+```powershell
+python build.py --force-connect-port
+```
+
+That flag only changes the bundled `config.json` placed beside the exe. It does not rewrite your source `config.json` in the repository.
 
 The output bundle is written to `dist\\SNI-Spoofing-GUI\\`.
 
