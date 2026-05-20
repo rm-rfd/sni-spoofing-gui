@@ -12,13 +12,16 @@ from tkinter import messagebox, ttk
 from app_config import (
     XRAY_LOG_LEVELS,
     get_app_dir,
-    get_config_path,
     get_config_port,
     load_config,
     normalize_xray_log_level,
     save_config,
 )
 from utils.delay_test import DelayTestResult, measure_delay_with_temporary_runtime
+
+
+DONATION_NETWORK_LABEL = "USDT (BEP20):"
+DONATION_ADDRESS = "0x6411d42175578CFafadfB6b536A4C97F0f6883Aa"
 
 
 class ControlPanel(tk.Tk):
@@ -38,9 +41,12 @@ class ControlPanel(tk.Tk):
         self.http_port_var = tk.StringVar()
         self.log_level_var = tk.StringVar(value="warning")
         self.status_var = tk.StringVar(value="Stopped")
+        self.donation_address_var = tk.StringVar(value=DONATION_ADDRESS)
+        self._context_menu_target: tk.Misc | None = None
 
         self._configure_style()
         self._build_layout()
+        self._install_context_menus()
         self.load_form_from_disk()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -63,14 +69,26 @@ class ControlPanel(tk.Tk):
         header = ttk.Frame(container)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="SNI-Spoofing", font=("Segoe UI Semibold", 18)).grid(
+        ttk.Label(header, text="SNI-Spoofing-GUI", font=("Segoe UI Semibold", 18)).grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             header,
-            text=f"Config file: {get_config_path()}",
+            text="اگر از این برنامه خوشتان آمد، می‌توانید با حمایت مالی از آن پشتیبانی کنید:",
             foreground="#4b5563",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        donation_frame = ttk.Frame(header)
+        donation_frame.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        donation_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(donation_frame, text=DONATION_NETWORK_LABEL).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        donation_entry = ttk.Entry(
+            donation_frame,
+            textvariable=self.donation_address_var,
+            state="readonly",
+            font=("Consolas", 10),
+        )
+        donation_entry.grid(row=0, column=1, sticky="ew")
 
         settings_frame = ttk.LabelFrame(container, text="Editable Settings", padding=12)
         settings_frame.grid(row=1, column=0, sticky="ew", pady=(16, 12))
@@ -183,6 +201,157 @@ class ControlPanel(tk.Tk):
 
         self._sync_button_state()
 
+    def _install_context_menus(self) -> None:
+        self._editable_context_menu = tk.Menu(self, tearoff=False)
+        self._editable_context_menu.add_command(label="Cut", command=self._context_cut)
+        self._editable_context_menu.add_command(label="Copy", command=self._context_copy)
+        self._editable_context_menu.add_command(label="Paste", command=self._context_paste)
+        self._editable_context_menu.add_command(label="Delete", command=self._context_delete)
+        self._editable_context_menu.add_separator()
+        self._editable_context_menu.add_command(label="Select All", command=self._context_select_all)
+
+        self._readonly_context_menu = tk.Menu(self, tearoff=False)
+        self._readonly_context_menu.add_command(label="Copy", command=self._context_copy)
+        self._readonly_context_menu.add_separator()
+        self._readonly_context_menu.add_command(label="Select All", command=self._context_select_all)
+
+        self._bind_context_menus(self)
+
+    def _bind_context_menus(self, root: tk.Misc) -> None:
+        for child in root.winfo_children():
+            if isinstance(child, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text)):
+                child.bind("<Button-3>", self._show_context_menu, add="+")
+            self._bind_context_menus(child)
+
+    def _show_context_menu(self, event: tk.Event[tk.Misc]) -> str:
+        widget = event.widget
+        if not isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Text)):
+            return ""
+
+        self._context_menu_target = widget
+        widget.focus_set()
+        self._set_insert_cursor_from_event(widget, event)
+
+        has_selection = bool(self._get_selected_text(widget))
+        has_content = bool(self._get_widget_text(widget))
+        editable = self._widget_is_editable(widget)
+        menu = self._editable_context_menu if editable else self._readonly_context_menu
+
+        if editable:
+            self._editable_context_menu.entryconfigure(0, state="normal" if has_selection else "disabled")
+            self._editable_context_menu.entryconfigure(1, state="normal" if has_content else "disabled")
+            self._editable_context_menu.entryconfigure(2, state="normal")
+            self._editable_context_menu.entryconfigure(3, state="normal" if has_selection else "disabled")
+            self._editable_context_menu.entryconfigure(5, state="normal" if has_content else "disabled")
+        else:
+            self._readonly_context_menu.entryconfigure(0, state="normal" if has_content else "disabled")
+            self._readonly_context_menu.entryconfigure(2, state="normal" if has_content else "disabled")
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _set_insert_cursor_from_event(self, widget: tk.Misc, event: tk.Event[tk.Misc]) -> None:
+        if isinstance(widget, tk.Text):
+            if not self._get_selected_text(widget):
+                widget.mark_set("insert", f"@{event.x},{event.y}")
+            return
+
+        if not self._get_selected_text(widget):
+            widget.icursor(widget.index(f"@{event.x}"))
+
+    def _widget_is_editable(self, widget: tk.Misc) -> bool:
+        state = str(widget.cget("state"))
+        return state not in {"disabled", "readonly"}
+
+    def _get_widget_text(self, widget: tk.Misc) -> str:
+        if isinstance(widget, tk.Text):
+            return widget.get("1.0", "end-1c")
+        return str(widget.get())
+
+    def _get_selected_text(self, widget: tk.Misc) -> str:
+        if isinstance(widget, tk.Text):
+            if not widget.tag_ranges(tk.SEL):
+                return ""
+            return widget.get("sel.first", "sel.last")
+
+        if not widget.selection_present():
+            return ""
+        return str(widget.selection_get())
+
+    def _context_copy(self) -> None:
+        widget = self._context_menu_target
+        if widget is None:
+            return
+
+        text = self._get_selected_text(widget) or self._get_widget_text(widget)
+        if not text:
+            return
+
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def _context_cut(self) -> None:
+        widget = self._context_menu_target
+        if widget is None or not self._widget_is_editable(widget):
+            return
+
+        text = self._get_selected_text(widget)
+        if not text:
+            return
+
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._delete_selection(widget)
+
+    def _context_paste(self) -> None:
+        widget = self._context_menu_target
+        if widget is None or not self._widget_is_editable(widget):
+            return
+
+        try:
+            text = self.clipboard_get()
+        except tk.TclError:
+            return
+
+        self._delete_selection(widget)
+        if isinstance(widget, tk.Text):
+            widget.insert("insert", text)
+        else:
+            widget.insert("insert", text)
+
+    def _context_delete(self) -> None:
+        widget = self._context_menu_target
+        if widget is None or not self._widget_is_editable(widget):
+            return
+
+        self._delete_selection(widget)
+
+    def _delete_selection(self, widget: tk.Misc) -> None:
+        if isinstance(widget, tk.Text):
+            if widget.tag_ranges(tk.SEL):
+                widget.delete("sel.first", "sel.last")
+            return
+
+        if widget.selection_present():
+            widget.delete("sel.first", "sel.last")
+
+    def _context_select_all(self) -> None:
+        widget = self._context_menu_target
+        if widget is None:
+            return
+
+        if isinstance(widget, tk.Text):
+            widget.tag_add(tk.SEL, "1.0", "end-1c")
+            widget.mark_set("insert", "end-1c")
+            widget.see("insert")
+            return
+
+        widget.select_range(0, "end")
+        widget.icursor("end")
+
     def _sync_button_state(self) -> None:
         is_running = self._is_process_running()
         is_busy = self.delay_test_in_progress
@@ -243,7 +412,7 @@ class ControlPanel(tk.Tk):
         if not xray_url:
             xray_url = str(config.get("VLESS_URL", ""))
         self.xray_url_text.insert("1.0", xray_url)
-        self._append_log(f"[loaded] {get_config_path()}")
+        self._append_log("[loaded] config reloaded from disk")
 
     def _parse_port_value(self, raw_value: str, field_name: str) -> int:
         try:
@@ -292,9 +461,9 @@ class ControlPanel(tk.Tk):
             messagebox.showerror("Invalid Configuration", str(exc), parent=self)
             return False
 
-        self._append_log(f"[saved] {get_config_path()}")
+        self._append_log("[saved] config written to disk")
         if show_message:
-            messagebox.showinfo("Config Saved", "The selected fields were written to config.json.", parent=self)
+            messagebox.showinfo("Config Saved", "The selected fields were saved.", parent=self)
         return True
 
     def _build_headless_command(self) -> list[str]:

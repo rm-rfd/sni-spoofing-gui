@@ -96,9 +96,9 @@ def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySetti
 
     xray_settings = XrayLocalProxySettings(
         binary_path=resolve_runtime_path(get_config_string(config, "XRAY_BINARY_PATH", os.path.join("xray", "xray.exe"))),
-        socks_host=get_config_string(config, "XRAY_SOCKS_HOST", "127.0.0.1"),
+        socks_host="127.0.0.1",
         socks_port=get_config_port(config, "XRAY_SOCKS_PORT", 10808),
-        http_host=get_config_string(config, "XRAY_HTTP_HOST", "127.0.0.1"),
+        http_host="127.0.0.1",
         http_port=get_config_port(config, "XRAY_HTTP_PORT", 10809),
         log_level=get_config_string(config, "XRAY_LOG_LEVEL", "warning"),
     )
@@ -337,8 +337,6 @@ def run_headless(config_path: str | None = None) -> int:
         threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
         log_line("SNI-Spoofing Relay started.")
         log_line(f"Listening on {LISTEN_HOST}:{LISTEN_PORT}, forwarding to {CONNECT_IP}:{CONNECT_PORT} with fake SNI={FAKE_SNI.decode(errors='replace')}")
-        log_line("اگر از این برنامه خوشتون اومد، لطفا حمایت کنید :)")
-        log_line("USDT (BEP20): 0x6411d42175578CFafadfB6b536A4C97F0f6883Aa")
         log_line()
         if xray_settings is not None:
             log_line(f"Bundled Xray started. SOCKS5 proxy: {xray_settings.socks_host}:{xray_settings.socks_port}")

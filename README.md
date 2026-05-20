@@ -80,9 +80,7 @@ The runtime behavior is controlled by `config.json`:
   "FAKE_SNI": "auth.vercel.com",
   "XRAY_URL": "vless://<uuid>@server.example:443?...",
   "XRAY_BINARY_PATH": "xray\\xray.exe",
-  "XRAY_SOCKS_HOST": "127.0.0.1",
   "XRAY_SOCKS_PORT": 10908,
-  "XRAY_HTTP_HOST": "127.0.0.1",
   "XRAY_HTTP_PORT": 10909,
   "XRAY_LOG_LEVEL": "warning",
   "XRAY_RELAY_HOST": "127.0.0.1"
@@ -96,8 +94,8 @@ The runtime behavior is controlled by `config.json`:
 - `FAKE_SNI`: the decoy SNI inserted into the synthetic ClientHello.
 - `CONNECT_PORT`: optional legacy fallback port used only when `XRAY_URL` is empty. If omitted, it defaults to `443`.
 - `XRAY_BINARY_PATH`: path to the bundled Xray executable.
-- `XRAY_SOCKS_HOST` and `XRAY_SOCKS_PORT`: local SOCKS5 listen address for the Xray child process.
-- `XRAY_HTTP_HOST` and `XRAY_HTTP_PORT`: local HTTP proxy listen address for the Xray child process.
+- `XRAY_SOCKS_PORT`: local SOCKS5 listen port for the Xray child process. The host is always `127.0.0.1`.
+- `XRAY_HTTP_PORT`: local HTTP proxy listen port for the Xray child process. The host is always `127.0.0.1`.
 - `XRAY_LOG_LEVEL`: Xray log level used for the generated runtime config.
 - `XRAY_RELAY_HOST`: optional override for the address Xray uses to reach the local relay. If omitted, the app derives a loopback-safe default from `LISTEN_HOST`.
 
@@ -149,10 +147,10 @@ If you need to run the relay against an alternate config file, you can override 
 python main.py --headless --config path\to\config.json
 ```
 
-If `XRAY_URL` is configured, the app starts bundled Xray and exposes these local proxies from the configured values:
+If `XRAY_URL` is configured, the app starts bundled Xray and exposes these local proxies on fixed loopback addresses:
 
-- SOCKS5: `XRAY_SOCKS_HOST:XRAY_SOCKS_PORT`
-- HTTP: `XRAY_HTTP_HOST:XRAY_HTTP_PORT`
+- SOCKS5: `127.0.0.1:XRAY_SOCKS_PORT`
+- HTTP: `127.0.0.1:XRAY_HTTP_PORT`
 
 Applications can use those proxy ports directly without running V2rayN.
 

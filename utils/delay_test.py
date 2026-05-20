@@ -250,9 +250,7 @@ def measure_delay_with_temporary_runtime(
 
     temp_config = dict(config)
     temp_config["LISTEN_PORT"] = relay_port
-    temp_config["XRAY_SOCKS_HOST"] = "127.0.0.1"
     temp_config["XRAY_SOCKS_PORT"] = socks_port
-    temp_config["XRAY_HTTP_HOST"] = "127.0.0.1"
     temp_config["XRAY_HTTP_PORT"] = http_port
 
     temp_config_path = _write_temp_config(temp_config)

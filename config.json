@@ -6,9 +6,7 @@
   "FAKE_SNI": "www.hcaptcha.com",
   "XRAY_URL": "vless://9863e1a5-f83b-4608-bed8-122d0a54b6d5@interim.yhbj.store:443?encryption=none&security=tls&sni=interim.yhbj.store&fp=chrome&alpn=h3%2Ch2%2Chttp%2F1.1&insecure=0&allowInsecure=0&type=xhttp&host=interim.yhbj.store&path=%2FKtBrKmKh&mode=auto#sni-spoof-config",
   "XRAY_BINARY_PATH": "xray\\xray.exe",
-  "XRAY_SOCKS_HOST": "127.0.0.1",
   "XRAY_SOCKS_PORT": 10908,
-  "XRAY_HTTP_HOST": "127.0.0.1",
   "XRAY_HTTP_PORT": 10909,
   "XRAY_LOG_LEVEL": "warning"
 }
