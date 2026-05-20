@@ -41,7 +41,7 @@ In short: this is not rewriting the real TLS handshake in transit. It is sending
 
 The upstream destination is fixed in `config.json`, so every accepted local connection is forwarded to the same remote IP and port.
 
-The app now also ships with a small desktop control panel. It edits the most common runtime fields in `config.json`, starts and stops the relay, and shows live process output in one window.
+The app now also ships with a small desktop control panel. It edits the most common runtime fields in `config.json`, starts and stops the relay, can run a V2rayN-style delay test, and shows live process output in one window.
 
 ## Current Implementation Limits
 
@@ -64,6 +64,7 @@ The current codebase is intentionally narrow:
 - `monitor_connection.py`: stores the per-connection state used during packet monitoring.
 - `utils/packet_templates.py`: builds the fake TLS ClientHello payload.
 - `utils/network_tools.py`: discovers the local IPv4 address used to reach the configured upstream IP.
+- `utils/delay_test.py`: launches a temporary relay and bundled Xray on random local ports, then measures a TCP connect to `google.com:443` through the generated HTTP proxy.
 - `utils/xray.py`: parses supported Xray share links, generates the Xray JSON config, validates it, and manages the Xray child process.
 
 ## Configuration
@@ -134,12 +135,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
-That command now opens the desktop control panel. From there you can save the selected config fields, start or stop the relay, and inspect logs without opening `config.json` in a text editor.
+That command now opens the desktop control panel. From there you can save the selected config fields, start or stop the relay, run a delay probe, and inspect logs without opening `config.json` in a text editor.
 
 If you want the previous console-only behavior, run:
 
 ```powershell
 python main.py --headless
+```
+
+If you need to run the relay against an alternate config file, you can override the path explicitly:
+
+```powershell
+python main.py --headless --config path\to\config.json
 ```
 
 If `XRAY_URL` is configured, the app starts bundled Xray and exposes these local proxies from the configured values:
@@ -148,6 +155,8 @@ If `XRAY_URL` is configured, the app starts bundled Xray and exposes these local
 - HTTP: `XRAY_HTTP_HOST:XRAY_HTTP_PORT`
 
 Applications can use those proxy ports directly without running V2rayN.
+
+The `Test Delay` button uses an isolated temporary runtime instead of reusing the saved relay ports. It chooses fresh local ports that do not collide with `LISTEN_PORT`, `CONNECT_PORT`, `XRAY_SOCKS_PORT`, or `XRAY_HTTP_PORT`, launches a temporary headless relay plus bundled Xray, opens a CONNECT tunnel through the temporary HTTP proxy, and measures a single HTTPS GET to `https://www.google.com/generate_204` through that tunnel. Stop the main relay before running the delay probe.
 
 The relay still listens on `LISTEN_HOST:LISTEN_PORT`, and Xray reaches it through `XRAY_RELAY_HOST:LISTEN_PORT`.
 

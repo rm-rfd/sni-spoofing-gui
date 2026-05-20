@@ -24,20 +24,22 @@ def get_app_dir() -> str:
     return str(Path(__file__).resolve().parent)
 
 
-def get_config_path() -> str:
+def get_config_path(config_path: str | None = None) -> str:
+    if config_path:
+        return os.path.abspath(config_path)
     return os.path.join(get_app_dir(), "config.json")
 
 
-def load_config() -> dict[str, Any]:
-    with open(get_config_path(), "r", encoding="utf-8") as config_file:
+def load_config(config_path: str | None = None) -> dict[str, Any]:
+    with open(get_config_path(config_path), "r", encoding="utf-8") as config_file:
         config = json.load(config_file)
     if not isinstance(config, dict):
         raise ValueError("config.json must contain a JSON object")
     return config
 
 
-def save_config(config: dict[str, Any]) -> None:
-    config_path = Path(get_config_path())
+def save_config(config: dict[str, Any], config_path: str | None = None) -> None:
+    config_path = Path(get_config_path(config_path))
     with config_path.open("w", encoding="utf-8", newline="\n") as config_file:
         json.dump(config, config_file, ensure_ascii=True, indent=2)
         config_file.write("\n")

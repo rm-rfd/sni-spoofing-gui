@@ -18,6 +18,7 @@ from app_config import (
     normalize_xray_log_level,
     save_config,
 )
+from utils.delay_test import DelayTestResult, measure_delay_with_temporary_runtime
 
 
 class ControlPanel(tk.Tk):
@@ -28,6 +29,7 @@ class ControlPanel(tk.Tk):
         self.minsize(860, 620)
 
         self.process: subprocess.Popen[str] | None = None
+        self.delay_test_in_progress = False
         self.log_queue: queue.Queue[tuple] = queue.Queue()
 
         self.connect_ip_var = tk.StringVar()
@@ -130,7 +132,7 @@ class ControlPanel(tk.Tk):
 
         actions = ttk.Frame(container)
         actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        actions.columnconfigure(5, weight=1)
+        actions.columnconfigure(6, weight=1)
 
         self.start_button = ttk.Button(actions, text="Start Relay", command=self.start_relay)
         self.start_button.grid(row=0, column=0, padx=(0, 8))
@@ -138,16 +140,19 @@ class ControlPanel(tk.Tk):
         self.stop_button = ttk.Button(actions, text="Stop Relay", command=self.stop_relay)
         self.stop_button.grid(row=0, column=1, padx=(0, 8))
 
+        self.test_delay_button = ttk.Button(actions, text="Test Delay", command=self.test_delay)
+        self.test_delay_button.grid(row=0, column=2, padx=(0, 8))
+
         self.reload_button = ttk.Button(actions, text="Reload From Disk", command=self.load_form_from_disk)
-        self.reload_button.grid(row=0, column=2, padx=(0, 8))
+        self.reload_button.grid(row=0, column=3, padx=(0, 8))
 
         self.save_button = ttk.Button(actions, text="Save Config", command=self.save_form_to_disk)
-        self.save_button.grid(row=0, column=3, padx=(0, 8))
+        self.save_button.grid(row=0, column=4, padx=(0, 8))
 
-        ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=4)
+        ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=5)
 
         ttk.Label(actions, textvariable=self.status_var, foreground="#1d4ed8").grid(
-            row=0, column=5, sticky="e"
+            row=0, column=6, sticky="e"
         )
 
         logs_frame = ttk.LabelFrame(container, text="Relay Logs", padding=12)
@@ -165,6 +170,8 @@ class ControlPanel(tk.Tk):
             borderwidth=1,
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
+        self.log_text.tag_configure("delay_error", foreground="#b91c1c")
+        self.log_text.tag_configure("delay_success", foreground="#15803d")
 
         log_scroll_y = ttk.Scrollbar(logs_frame, orient="vertical", command=self.log_text.yview)
         log_scroll_y.grid(row=0, column=1, sticky="ns")
@@ -178,19 +185,39 @@ class ControlPanel(tk.Tk):
 
     def _sync_button_state(self) -> None:
         is_running = self._is_process_running()
-        if is_running:
+        is_busy = self.delay_test_in_progress
+        if is_running or is_busy:
             self.start_button.state(["disabled"])
-            self.stop_button.state(["!disabled"])
         else:
             self.start_button.state(["!disabled"])
+
+        if is_running:
+            self.stop_button.state(["!disabled"])
+        else:
             self.stop_button.state(["disabled"])
+
+        if is_busy:
+            self.test_delay_button.state(["disabled"])
+            self.reload_button.state(["disabled"])
+            self.save_button.state(["disabled"])
+            return
+
+        if is_running:
+            self.test_delay_button.state(["disabled"])
+        else:
+            self.test_delay_button.state(["!disabled"])
+        self.reload_button.state(["!disabled"])
+        self.save_button.state(["!disabled"])
 
     def _is_process_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def _append_log(self, message: str) -> None:
+    def _append_log(self, message: str, tag: str | None = None) -> None:
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"{message}\n")
+        if tag is None:
+            self.log_text.insert("end", f"{message}\n")
+        else:
+            self.log_text.insert("end", f"{message}\n", tag)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
@@ -315,6 +342,41 @@ class ControlPanel(tk.Tk):
         threading.Thread(target=self._read_process_output, args=(self.process,), daemon=True).start()
         threading.Thread(target=self._monitor_process, args=(self.process,), daemon=True).start()
 
+    def test_delay(self) -> None:
+        if self._is_process_running():
+            messagebox.showinfo(
+                "Relay Running",
+                "Stop the current relay before running a temporary delay test.",
+                parent=self,
+            )
+            return
+
+        try:
+            config = self._build_updated_config()
+        except Exception as exc:
+            messagebox.showerror("Invalid Configuration", str(exc), parent=self)
+            return
+
+        self.delay_test_in_progress = True
+        self.status_var.set("Testing Delay...")
+        self._sync_button_state()
+        self._append_log("[delay] Testing proxied HTTPS GET to https://www.google.com/generate_204 through a temporary relay and Xray runtime")
+        threading.Thread(target=self._run_delay_test, args=(config,), daemon=True).start()
+
+    def _run_delay_test(self, config: dict[str, object]) -> None:
+        try:
+            result = measure_delay_with_temporary_runtime(
+                config,
+                self._build_headless_command(),
+                log_callback=self._queue_worker_log,
+            )
+        except Exception as exc:
+            self.log_queue.put(("delay-error", str(exc)))
+        else:
+            self.log_queue.put(("delay-result", result))
+        finally:
+            self.log_queue.put(("delay-finished",))
+
     def stop_relay(self) -> None:
         if not self._is_process_running() or self.process is None:
             return
@@ -367,6 +429,26 @@ class ControlPanel(tk.Tk):
             self._sync_button_state()
         self._append_log(f"[exit] relay exited with code {return_code}")
 
+    def _queue_worker_log(self, message: str) -> None:
+        self.log_queue.put(("log", message))
+
+    def _handle_delay_result(self, result: DelayTestResult) -> None:
+        self._append_log(
+            f"[delay] {result.target_host}:{result.target_port} reachable in {result.latency_ms:.0f} ms "
+            f"via relay={result.relay_port}, socks={result.socks_port}, http={result.http_port}",
+            "delay_success",
+        )
+        self.status_var.set(f"Delay: {result.latency_ms:.0f} ms")
+
+    def _handle_delay_finished(self) -> None:
+        self.delay_test_in_progress = False
+        current_status = self.status_var.get()
+        if self._is_process_running() and self.process is not None:
+            self.status_var.set(f"Running (PID {self.process.pid})")
+        elif current_status == "Testing Delay...":
+            self.status_var.set("Stopped")
+        self._sync_button_state()
+
     def _drain_log_queue(self) -> None:
         while True:
             try:
@@ -380,6 +462,14 @@ class ControlPanel(tk.Tk):
             elif kind == "exit":
                 _, process, return_code = item
                 self._handle_process_exit(process, int(return_code))
+            elif kind == "delay-result":
+                self._handle_delay_result(item[1])
+            elif kind == "delay-error":
+                message = str(item[1])
+                self._append_log(f"[delay] failed: {message}", "delay_error")
+                self.status_var.set("Delay Test Failed")
+            elif kind == "delay-finished":
+                self._handle_delay_finished()
 
         if self.winfo_exists():
             self.after(100, self._drain_log_queue)

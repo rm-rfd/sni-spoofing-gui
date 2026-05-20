@@ -16,6 +16,7 @@ from fake_tcp import FakeInjectiveConnection, FakeTcpInjector
 
 
 config: dict[str, object] = {}
+CONFIG_PATH_OVERRIDE: str | None = None
 LISTEN_HOST = ""
 LISTEN_PORT = 0
 FAKE_SNI = b""
@@ -39,10 +40,10 @@ def resolve_connect_port(config_data: dict[str, object]) -> int:
     return get_config_port(config_data, "CONNECT_PORT", 443)
 
 
-def load_runtime_settings() -> None:
+def load_runtime_settings(config_path: str | None = None) -> None:
     global config, LISTEN_HOST, LISTEN_PORT, FAKE_SNI, CONNECT_IP, CONNECT_PORT, INTERFACE_IPV4
 
-    config = load_config()
+    config = load_config(config_path or CONFIG_PATH_OVERRIDE)
     LISTEN_HOST = get_config_string(config, "LISTEN_HOST", "0.0.0.0")
     LISTEN_PORT = get_config_port(config, "LISTEN_PORT", 40443)
 
@@ -65,7 +66,7 @@ def load_runtime_settings() -> None:
 def ensure_runtime_settings_loaded() -> None:
     if config:
         return
-    load_runtime_settings()
+    load_runtime_settings(CONFIG_PATH_OVERRIDE)
 
 
 def resolve_runtime_path(relative_or_absolute_path: str) -> str:
@@ -113,7 +114,7 @@ def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySetti
 
 
 def maybe_start_xray_proxy() -> tuple[XrayProcessManager | None, XrayLocalProxySettings | None]:
-    load_runtime_settings()
+    load_runtime_settings(CONFIG_PATH_OVERRIDE)
     xray_manager, xray_settings = build_xray_manager()
     if xray_manager is None:
         return None, None
@@ -323,8 +324,8 @@ def log_line(message: str = "") -> None:
     stdout.flush()
 
 
-def run_headless() -> int:
-    load_runtime_settings()
+def run_headless(config_path: str | None = None) -> int:
+    load_runtime_settings(config_path)
     xray_manager: XrayProcessManager | None = None
     try:
         xray_manager, xray_settings = maybe_start_xray_proxy()
@@ -355,13 +356,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run the relay without launching the control panel.",
     )
+    parser.add_argument(
+        "--config",
+        help="Optional path to an alternate config.json file.",
+    )
     return parser.parse_args()
 
 
 def cli_main() -> int:
+    global CONFIG_PATH_OVERRIDE
+
     args = parse_args()
+    CONFIG_PATH_OVERRIDE = args.config
     if args.headless:
-        return run_headless()
+        return run_headless(args.config)
 
     from gui import launch_gui
 
