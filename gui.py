@@ -158,7 +158,7 @@ class SurfaceButton:
                 "font_size": 10,
                 "icon_size": 12,
                 "radius": 11,
-                "min_height": 32,
+                "min_height": 36,
                 "min_width": 120,
                 "content_anchor": "center",
                 "draw_surface": True,
@@ -179,7 +179,7 @@ class SurfaceButton:
                 "font_size": 10,
                 "icon_size": 12,
                 "radius": 11,
-                "min_height": 32,
+                "min_height": 36,
                 "min_width": 120,
                 "content_anchor": "center",
                 "draw_surface": True,
@@ -487,6 +487,7 @@ class RoundedPanel:
         self._content = tk.Frame(self._canvas, bg=self._fill, bd=0, highlightthickness=0)
         self._window_id = self._canvas.create_window(0, 0, anchor="nw", window=self._content)
         self._canvas.bind("<Configure>", self._redraw, add="+")
+        self._content.bind("<Configure>", self._redraw, add="+")
         self._redraw()
 
     @property
@@ -539,8 +540,12 @@ class RoundedPanel:
 
     def _redraw(self, _event: tk.Event[tk.Misc] | None = None) -> None:
         width = max(2, self._canvas.winfo_width())
-        height = max(2, self._canvas.winfo_height())
         pad_left, pad_top, pad_right, pad_bottom = self._padding
+        content_height = max(1, self._content.winfo_reqheight())
+        desired_height = max(2, content_height + pad_top + pad_bottom)
+        if self._canvas.winfo_height() != desired_height:
+            self._canvas.configure(height=desired_height)
+        height = max(2, self._canvas.winfo_height())
         content_width = max(1, width - pad_left - pad_right)
         content_height = max(1, height - pad_top - pad_bottom)
 
@@ -556,6 +561,10 @@ class RoundedPanel:
         )
         self._canvas.coords(self._window_id, pad_left, pad_top)
         self._canvas.itemconfigure(self._window_id, width=content_width, height=content_height)
+
+    def refresh(self) -> None:
+        self._canvas.update_idletasks()
+        self._redraw()
 
     def grid(self, *args: object, **kwargs: object) -> None:
         self._canvas.grid(*args, **kwargs)
@@ -721,6 +730,7 @@ class HowToRunDialog(simpledialog.Dialog):
             style="SectionTitle.TLabel",
             anchor="e",
             justify="right",
+            font=("Segoe UI", 14, "bold"),
         ).grid(row=0, column=0, sticky="e", pady=(0, 8))
 
         instructions_frame = ttk.Frame(container, style="Card.TFrame", padding=(16, 16, 16, 16))
@@ -730,7 +740,7 @@ class HowToRunDialog(simpledialog.Dialog):
         tk.Label(
             instructions_frame,
             text="\n".join(_rtl_line(line) for line in HOW_TO_RUN_TEXT.splitlines()),
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 12),
             justify="right",
             anchor="e",
             wraplength=620,
@@ -1433,19 +1443,31 @@ class ControlPanel(tk.Tk):
         footer.grid(row=3, column=0, sticky="ew")
         footer.columnconfigure(0, weight=1)
 
-        help_button = tk.Label(
+        # help_button = tk.Label(
+        #     footer,
+        #     text=self._icon_glyph("help"),
+        #     bg=THEME["low"],
+        #     fg=THEME["muted"],
+        #     font=(self._font_families["icon"], 18),
+        #     cursor="hand2",
+        #     padx=2,
+        # )
+        # help_button.grid(row=0, column=0, sticky="w", pady=(0, 8))
+        # help_button.bind("<Button-1>", lambda _event: self._show_how_to_run_dialog(), add="+")
+        # help_button.bind("<Enter>", lambda _event: help_button.configure(fg=THEME["accent_text"]), add="+")
+        # help_button.bind("<Leave>", lambda _event: help_button.configure(fg=THEME["muted"]), add="+")
+
+        how_to_run_button = SurfaceButton(
             footer,
-            text=self._icon_glyph("help"),
-            bg=THEME["low"],
-            fg=THEME["muted"],
-            font=(self._font_families["icon"], 18),
-            cursor="hand2",
-            padx=2,
+            theme=THEME,
+            fonts=self._font_families,
+            text="How to Run",
+            icon_glyph=self._icon_glyph("help"),
+            variant="sidebar_outline",
+            command=self._show_how_to_run_dialog,
         )
-        help_button.grid(row=0, column=0, sticky="w", pady=(0, 8))
-        help_button.bind("<Button-1>", lambda _event: self._show_how_to_run_dialog(), add="+")
-        help_button.bind("<Enter>", lambda _event: help_button.configure(fg=THEME["accent_text"]), add="+")
-        help_button.bind("<Leave>", lambda _event: help_button.configure(fg=THEME["muted"]), add="+")
+        how_to_run_button.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
 
         updates_button = SurfaceButton(
             footer,
@@ -1519,6 +1541,7 @@ class ControlPanel(tk.Tk):
         self._build_settings_card(section, 1, 1, "FAKE SNI", self.fake_sni_var, "public")
         self._build_settings_card(section, 1, 2, "SOCKS PORT", self.socks_port_var, "usb")
         self._build_settings_card(section, 1, 3, "HTTP PORT", self.http_port_var, "usb")
+        shell.refresh()
 
     def _build_settings_card(
         self,
@@ -1529,27 +1552,27 @@ class ControlPanel(tk.Tk):
         variable: tk.StringVar,
         icon_name: str,
     ) -> None:
-        card = tk.Frame(
+        card = RoundedPanel(
             parent,
-            bg=THEME["card"],
-            highlightbackground=THEME["border"],
-            highlightthickness=1,
-            padx=12,
-            pady=10,
+            fill=THEME["card"],
+            border=THEME["border"],
+            radius=14,
+            padding=(12, 10, 12, 10),
         )
         left_pad = 0 if column == 0 else 8
         right_pad = 0 if column == 3 else 8
         card.grid(row=row, column=column, sticky="ew", padx=(left_pad, right_pad), pady=4)
-        card.columnconfigure(0, weight=1)
+        card.content.columnconfigure(0, weight=1)
 
-        top = tk.Frame(card, bg=THEME["card"])
+        top = tk.Frame(card.content, bg=THEME["card"])
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
 
         ttk.Label(top, text=label_text, style="CardLabel.TLabel").grid(row=0, column=0, sticky="w")
         badge = self._build_icon_badge(top, icon_name)
         badge.grid(row=0, column=1, sticky="e")
-        ttk.Entry(card, textvariable=variable, style="Card.TEntry").grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        ttk.Entry(card.content, textvariable=variable, style="Card.TEntry").grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        card.refresh()
 
     def _build_profiles_section(self, parent: ttk.Frame) -> None:
         shell = RoundedPanel(
@@ -1702,14 +1725,16 @@ class ControlPanel(tk.Tk):
             sticky="w",
             pady=(10, 0),
         )
+        shell.refresh()
 
     def _build_actions_section(self, parent: ttk.Frame) -> None:
         section = ttk.Frame(parent, style="Main.TFrame", padding=(0, 0, 0, 0))
         section.grid(row=3, column=0, sticky="ew", pady=(0, 16))
         section.columnconfigure(0, weight=1)
+        section.columnconfigure(1, weight=0)
 
         divider = tk.Frame(section, bg=THEME["border"], height=1)
-        divider.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        divider.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
 
         buttons = tk.Frame(section, bg=THEME["shell"])
         buttons.grid(row=1, column=0, sticky="w")
@@ -1759,7 +1784,7 @@ class ControlPanel(tk.Tk):
         clear_logs_button.grid(row=0, column=3)
 
         status_wrap = tk.Frame(section, bg=THEME["shell"])
-        status_wrap.grid(row=1, column=5, sticky="w", pady=(12, 0))
+        status_wrap.grid(row=1, column=1, sticky="e")
         status_wrap.columnconfigure(0, weight=1)
 
         self._status_detail_label = ttk.Label(status_wrap, textvariable=self.status_var, style="StatusDetail.TLabel")
@@ -1770,16 +1795,16 @@ class ControlPanel(tk.Tk):
             bg=THEME["low"],
             highlightbackground=THEME["border"],
             highlightthickness=1,
-            padx=10,
-            pady=5,
+            padx=7,
+            pady=3,
         )
-        self._relay_chip_frame.grid(row=0, column=1, sticky="w", pady=(8, 0))
+        self._relay_chip_frame.grid(row=0, column=1, sticky="w", padx=(12, 0))
         self._relay_chip_dot = tk.Label(
             self._relay_chip_frame,
             text="●",
             bg=THEME["low"],
             fg=THEME["muted"],
-            font=(self._font_families["body"], 8, "bold"),
+            font=(self._font_families["body"], 7, "bold"),
         )
         self._relay_chip_dot.pack(side="left")
         self._relay_chip_label = tk.Label(
@@ -1787,8 +1812,8 @@ class ControlPanel(tk.Tk):
             textvariable=self.relay_chip_var,
             bg=THEME["low"],
             fg=THEME["text"],
-            font=(self._font_families["label"], 8, "bold"),
-            padx=6,
+            font=(self._font_families["label"], 7, "bold"),
+            padx=4,
         )
         self._relay_chip_label.pack(side="left")
 
@@ -1866,6 +1891,7 @@ class ControlPanel(tk.Tk):
         )
         log_scroll_x.grid(row=2, column=0, sticky="ew")
         self.log_text.configure(xscrollcommand=log_scroll_x.set)
+        shell.refresh()
 
     def _install_context_menus(self) -> None:
         self._editable_context_menu = tk.Menu(self, tearoff=False)
