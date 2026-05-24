@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import base64
+import ctypes
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
+from typing import Callable
 from tkinter import messagebox, simpledialog, ttk
 
 from app_config import (
@@ -27,8 +32,570 @@ from utils.delay_test import DelayTestResult, measure_delay_with_temporary_runti
 
 DONATION_NETWORK_LABEL = "USDT (BEP20):"
 DONATION_ADDRESS = "0x6411d42175578CFafadfB6b536A4C97F0f6883Aa"
-APP_ICON_ICO_PATH = Path(get_app_dir()) / "logo.ico"
-APP_ICON_PNG_PATH = Path(get_app_dir()) / "logo.png"
+APP_NAME = "RM SNI Spoofer"
+APP_ROOT = Path(get_app_dir())
+APP_ICON_ICO_PATH = APP_ROOT / "logo.ico"
+APP_ICON_PNG_PATH = APP_ROOT / "logo.png"
+APP_FONTS_DIR = APP_ROOT / "fonts"
+APP_ICONS_DIR = APP_ROOT / "icons"
+WINDOWS_PRIVATE_FONT_FLAG = 0x10
+
+THEME = {
+    "base_bg": "#0e0e0e",
+    "shell": "#131313",
+    "low": "#1c1b1b",
+    "card": "#201f1f",
+    "hover": "#2a2a2a",
+    "strong": "#353534",
+    "accent": "#ff6b00",
+    "accent_text": "#ffb693",
+    "text": "#e5e2e1",
+    "muted": "#c8c6c5",
+    "muted_alt": "#e2bfb0",
+    "border": "#5a4136",
+    "input_border": "#333333",
+    "selection": "#3a2a21",
+    "accent_soft": "#2b1d15",
+    "success": "#16a34a",
+    "warning": "#d97706",
+    "error": "#dc2626",
+    "log_bg": "#101010",
+}
+
+ICON_FALLBACK_TEXT = {
+    "dashboard": "Dashboard",
+    "refresh": "Check Updates",
+    "volunteer": "Support Us",
+    "help": "Help",
+    "lan": "LAN",
+    "public": "SNI",
+    "usb": "Port",
+    "bolt": "Start",
+    "stop_circle": "Stop",
+    "speed": "Test",
+    "delete": "Clear",
+}
+
+ICON_GLYPHS = {
+    "dashboard": "\uf246",
+    "refresh": "\ue72c",
+    "volunteer": "\ueb51",
+    "help": "\ue897",
+    "lan": "\ue968",
+    "public": "\ue774",
+    "usb": "\ue88e",
+    "bolt": "\ue945",
+    "stop_circle": "\uee95",
+    "speed": "\uec4a",
+    "delete": "\ue74d",
+}
+
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_ROUND = 2
+
+
+class SurfaceButton:
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        theme: dict[str, str],
+        fonts: dict[str, str],
+        text: str,
+        command: Callable[[], None] | None = None,
+        icon_glyph: str = "",
+        variant: str = "secondary",
+        icon_only: bool = False,
+    ) -> None:
+        self._theme = theme
+        self._fonts = fonts
+        self._text = text
+        self._command = command
+        self._icon_glyph = icon_glyph
+        self._variant = variant
+        self._icon_only = icon_only
+        self._disabled = False
+        self._hovered = False
+
+        self._parent_bg = str(master.cget("bg")) if "bg" in master.keys() else theme["shell"]
+        self._canvas = tk.Canvas(
+            master,
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+            takefocus=1,
+            background=self._parent_bg,
+            cursor="hand2",
+        )
+        for sequence in ("<Enter>", "<Leave>", "<Button-1>", "<Return>", "<space>", "<Configure>"):
+            handler = {
+                "<Enter>": self._on_enter,
+                "<Leave>": self._on_leave,
+                "<Button-1>": self._invoke,
+                "<Return>": self._invoke,
+                "<space>": self._invoke,
+                "<Configure>": self._redraw,
+            }[sequence]
+            self._canvas.bind(sequence, handler, add="+")
+
+        self._apply_style()
+
+    def _style_tokens(self) -> dict[str, object]:
+        base_styles: dict[str, dict[str, object]] = {
+            "primary": {
+                "bg": self._theme["accent"],
+                "fg": self._theme["base_bg"],
+                "border": self._theme["accent"],
+                "hover_bg": "#ff8129",
+                "hover_fg": self._theme["base_bg"],
+                "hover_border": "#ff8129",
+                "disabled_bg": self._theme["strong"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["strong"],
+                "padx": 14,
+                "pady": 6,
+                "gap": 8,
+                "font_size": 10,
+                "icon_size": 12,
+                "radius": 11,
+                "min_height": 32,
+                "min_width": 120,
+                "content_anchor": "center",
+                "draw_surface": True,
+            },
+            "secondary": {
+                "bg": self._theme["shell"],
+                "fg": self._theme["text"],
+                "border": self._theme["border"],
+                "hover_bg": self._theme["accent_soft"],
+                "hover_fg": self._theme["text"],
+                "hover_border": self._theme["accent"],
+                "disabled_bg": self._theme["shell"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["input_border"],
+                "padx": 14,
+                "pady": 6,
+                "gap": 8,
+                "font_size": 10,
+                "icon_size": 12,
+                "radius": 11,
+                "min_height": 32,
+                "min_width": 120,
+                "content_anchor": "center",
+                "draw_surface": True,
+            },
+            "sidebar_primary": {
+                "bg": self._theme["accent"],
+                "fg": self._theme["base_bg"],
+                "border": self._theme["accent"],
+                "hover_bg": "#ff8129",
+                "hover_fg": self._theme["base_bg"],
+                "hover_border": "#ff8129",
+                "disabled_bg": self._theme["strong"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["strong"],
+                "padx": 16,
+                "pady": 10,
+                "gap": 8,
+                "font_size": 10,
+                "icon_size": 12,
+                "radius": 11,
+                "min_height": 42,
+                "min_width": 0,
+                "content_anchor": "center",
+                "draw_surface": True,
+            },
+            "sidebar_outline": {
+                "bg": self._theme["low"],
+                "fg": self._theme["accent_text"],
+                "border": self._theme["accent"],
+                "hover_bg": self._theme["accent_soft"],
+                "hover_fg": self._theme["accent_text"],
+                "hover_border": self._theme["accent"],
+                "disabled_bg": self._theme["low"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["input_border"],
+                "padx": 16,
+                "pady": 10,
+                "gap": 8,
+                "font_size": 10,
+                "icon_size": 12,
+                "radius": 11,
+                "min_height": 42,
+                "min_width": 0,
+                "content_anchor": "center",
+                "draw_surface": True,
+            },
+            "nav_active": {
+                "bg": self._theme["accent_soft"],
+                "fg": self._theme["accent_text"],
+                "border": self._theme["accent"],
+                "hover_bg": "#362419",
+                "hover_fg": self._theme["accent_text"],
+                "hover_border": self._theme["accent"],
+                "disabled_bg": self._theme["accent_soft"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["accent"],
+                "padx": 16,
+                "pady": 10,
+                "gap": 8,
+                "font_size": 10,
+                "icon_size": 12,
+                "radius": 11,
+                "min_height": 42,
+                "min_width": 0,
+                "content_anchor": "left",
+                "draw_surface": True,
+            },
+            "header_icon": {
+                "bg": self._theme["shell"],
+                "fg": self._theme["muted_alt"],
+                "border": self._theme["shell"],
+                "hover_bg": self._theme["shell"],
+                "hover_fg": self._theme["accent_text"],
+                "hover_border": self._theme["shell"],
+                "disabled_bg": self._theme["shell"],
+                "disabled_fg": self._theme["muted"],
+                "disabled_border": self._theme["shell"],
+                "padx": 4,
+                "pady": 4,
+                "gap": 0,
+                "font_size": 10,
+                "icon_size": 18,
+                "radius": 0,
+                "min_height": 24,
+                "min_width": 24,
+                "content_anchor": "center",
+                "draw_surface": False,
+            },
+        }
+        return base_styles[self._variant]
+
+    def _measure(self, style: dict[str, object]) -> tuple[int, int, int, int, int]:
+        icon_width = 0
+        text_width = 0
+        line_height = 0
+
+        icon_font = tkfont.Font(family=self._fonts["icon"], size=int(style["icon_size"]))
+        if self._icon_glyph:
+            icon_width = icon_font.measure(self._icon_glyph)
+            line_height = max(line_height, icon_font.metrics("linespace"))
+
+        show_text = not self._icon_only or not self._icon_glyph
+        text_font = tkfont.Font(family=self._fonts["button"], size=int(style["font_size"]), weight="bold")
+        if show_text:
+            text_width = text_font.measure(self._text)
+            line_height = max(line_height, text_font.metrics("linespace"))
+
+        content_width = icon_width + text_width
+        if icon_width and text_width:
+            content_width += int(style["gap"])
+
+        width = max(int(style["min_width"]), content_width + (int(style["padx"]) * 2))
+        height = max(int(style["min_height"]), line_height + (int(style["pady"]) * 2))
+        return width, height, icon_width, text_width, line_height
+
+    def _rounded_points(self, x1: float, y1: float, x2: float, y2: float, radius: float) -> list[float]:
+        return [
+            x1 + radius,
+            y1,
+            x1 + radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + radius,
+            x2,
+            y1 + radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2,
+            x2 - radius,
+            y2,
+            x2 - radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - radius,
+            x1,
+            y2 - radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1,
+        ]
+
+    def _redraw(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        style = self._style_tokens()
+        width_hint, height_hint, icon_width, text_width, _line_height = self._measure(style)
+        current_width = max(width_hint, self._canvas.winfo_width())
+        current_height = max(height_hint, self._canvas.winfo_height())
+
+        self._canvas.configure(
+            width=width_hint,
+            height=height_hint,
+            bg=self._parent_bg,
+            cursor="arrow" if self._disabled else "hand2",
+        )
+        self._canvas.delete("surface")
+        self._canvas.delete("content")
+
+        if bool(style["draw_surface"]):
+            radius = float(style["radius"])
+            self._canvas.create_polygon(
+                self._rounded_points(1, 1, current_width - 1, current_height - 1, radius),
+                smooth=True,
+                splinesteps=36,
+                fill=self._background,
+                outline=self._border,
+                width=1,
+                tags="surface",
+            )
+
+        content_width = icon_width + text_width
+        if icon_width and text_width:
+            content_width += int(style["gap"])
+
+        if style["content_anchor"] == "left":
+            x = float(style["padx"])
+        else:
+            x = max(float(style["padx"]), (current_width - content_width) / 2)
+
+        y = current_height / 2
+        if self._icon_glyph:
+            self._canvas.create_text(
+                x,
+                y,
+                text=self._icon_glyph,
+                fill=self._foreground,
+                font=(self._fonts["icon"], int(style["icon_size"])),
+                anchor="w",
+                tags="content",
+            )
+            x += icon_width
+            if text_width:
+                x += int(style["gap"])
+
+        if not self._icon_only or not self._icon_glyph:
+            self._canvas.create_text(
+                x,
+                y,
+                text=self._text,
+                fill=self._foreground,
+                font=(self._fonts["button"], int(style["font_size"]), "bold"),
+                anchor="w",
+                tags="content",
+            )
+
+    def _apply_style(self) -> None:
+        style = self._style_tokens()
+        if self._disabled:
+            self._background = str(style["disabled_bg"])
+            self._foreground = str(style["disabled_fg"])
+            self._border = str(style["disabled_border"])
+        elif self._hovered:
+            self._background = str(style["hover_bg"])
+            self._foreground = str(style["hover_fg"])
+            self._border = str(style["hover_border"])
+        else:
+            self._background = str(style["bg"])
+            self._foreground = str(style["fg"])
+            self._border = str(style["border"])
+
+        self._redraw()
+
+    def _on_enter(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._disabled:
+            return
+        self._hovered = True
+        self._apply_style()
+
+    def _on_leave(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._disabled:
+            return
+        self._hovered = False
+        self._apply_style()
+
+    def _invoke(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        if self._disabled or self._command is None:
+            return "break"
+        self._command()
+        return "break"
+
+    def state(self, state_specs: list[str]) -> None:
+        for state_spec in state_specs:
+            if state_spec == "disabled":
+                self._disabled = True
+            elif state_spec == "!disabled":
+                self._disabled = False
+        self._hovered = False
+        self._apply_style()
+
+    def grid(self, *args: object, **kwargs: object) -> None:
+        self._canvas.grid(*args, **kwargs)
+
+    def pack(self, *args: object, **kwargs: object) -> None:
+        self._canvas.pack(*args, **kwargs)
+
+    def place(self, *args: object, **kwargs: object) -> None:
+        self._canvas.place(*args, **kwargs)
+
+
+class RoundedPanel:
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        fill: str,
+        border: str,
+        radius: int = 18,
+        padding: tuple[int, int, int, int] = (16, 16, 16, 16),
+        border_width: int = 1,
+    ) -> None:
+        self._fill = fill
+        self._border = border
+        self._radius = radius
+        self._padding = padding
+        self._border_width = border_width
+
+        try:
+            self._parent_bg = str(master.cget("bg"))
+        except Exception:
+            self._parent_bg = THEME["shell"]
+
+        self._canvas = tk.Canvas(
+            master,
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+            background=self._parent_bg,
+        )
+        self._content = tk.Frame(self._canvas, bg=self._fill, bd=0, highlightthickness=0)
+        self._window_id = self._canvas.create_window(0, 0, anchor="nw", window=self._content)
+        self._canvas.bind("<Configure>", self._redraw, add="+")
+        self._redraw()
+
+    @property
+    def content(self) -> tk.Frame:
+        return self._content
+
+    def _rounded_points(self, x1: float, y1: float, x2: float, y2: float, radius: float) -> list[float]:
+        return [
+            x1 + radius,
+            y1,
+            x1 + radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + radius,
+            x2,
+            y1 + radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2,
+            x2 - radius,
+            y2,
+            x2 - radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - radius,
+            x1,
+            y2 - radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1,
+        ]
+
+    def _redraw(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        width = max(2, self._canvas.winfo_width())
+        height = max(2, self._canvas.winfo_height())
+        pad_left, pad_top, pad_right, pad_bottom = self._padding
+        content_width = max(1, width - pad_left - pad_right)
+        content_height = max(1, height - pad_top - pad_bottom)
+
+        self._canvas.delete("surface")
+        self._canvas.create_polygon(
+            self._rounded_points(1, 1, width - 1, height - 1, float(self._radius)),
+            smooth=True,
+            splinesteps=36,
+            fill=self._fill,
+            outline=self._border,
+            width=self._border_width,
+            tags="surface",
+        )
+        self._canvas.coords(self._window_id, pad_left, pad_top)
+        self._canvas.itemconfigure(self._window_id, width=content_width, height=content_height)
+
+    def grid(self, *args: object, **kwargs: object) -> None:
+        self._canvas.grid(*args, **kwargs)
+
+    def pack(self, *args: object, **kwargs: object) -> None:
+        self._canvas.pack(*args, **kwargs)
+
+    def place(self, *args: object, **kwargs: object) -> None:
+        self._canvas.place(*args, **kwargs)
+
+
+def _iter_private_font_paths() -> list[Path]:
+    font_paths: list[Path] = []
+    for font_dir in (
+        APP_FONTS_DIR / "Inter" / "static",
+        APP_FONTS_DIR / "Geist" / "static",
+    ):
+        if not font_dir.is_dir():
+            continue
+        font_paths.extend(sorted(font_dir.glob("*.ttf")))
+    return font_paths
+
+
+def _status_prefix_tag(message: str) -> str | None:
+    match = re.match(r"^(\[[^\]]+\])", message)
+    if match is None:
+        return None
+
+    prefix = match.group(1).lower()
+    return {
+        "[start]": "log_start",
+        "[stop]": "log_stop",
+        "[exit]": "log_exit",
+        "[delay]": "log_delay",
+        "[pid]": "log_meta",
+        "[profiles]": "log_meta",
+        "[loaded]": "log_meta",
+        "[support]": "log_meta",
+        "[updates]": "log_meta",
+    }.get(prefix)
 
 
 def _rtl_line(text: str) -> str:
@@ -65,7 +632,11 @@ class ShareUrlDialog(simpledialog.Dialog):
         super().__init__(parent, title)
 
     def body(self, master: tk.Misc) -> tk.Widget:
-        container = ttk.Frame(master, padding=8)
+        self.configure(bg=THEME["shell"])
+        if isinstance(master, tk.Widget):
+            master.configure(background=THEME["shell"])
+
+        container = ttk.Frame(master, style="Section.TFrame", padding=(16, 16, 16, 16))
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(1, weight=1)
@@ -73,7 +644,8 @@ class ShareUrlDialog(simpledialog.Dialog):
         ttk.Label(
             container,
             text="Paste a direct vless:// or trojan:// share link.",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+            style="Body.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         self.url_text = tk.Text(
             container,
@@ -81,16 +653,44 @@ class ShareUrlDialog(simpledialog.Dialog):
             height=6,
             wrap="word",
             font=("Consolas", 10),
-            relief="solid",
-            borderwidth=1,
+            relief="flat",
+            borderwidth=0,
+            background=THEME["log_bg"],
+            foreground=THEME["text"],
+            insertbackground=THEME["text"],
+            selectbackground=THEME["selection"],
+            padx=12,
+            pady=12,
         )
         self.url_text.grid(row=1, column=0, sticky="nsew")
         self.url_text.insert("1.0", self.initial_url)
 
-        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.url_text.yview)
+        scrollbar = ttk.Scrollbar(
+            container,
+            orient="vertical",
+            command=self.url_text.yview,
+            style="Shell.Vertical.TScrollbar",
+        )
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.url_text.configure(yscrollcommand=scrollbar.set)
         return self.url_text
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self, style="Shell.TFrame", padding=(16, 0, 16, 16))
+        box.pack(fill="x")
+        box.columnconfigure(0, weight=1)
+
+        buttons = ttk.Frame(box, style="Shell.TFrame")
+        buttons.grid(row=0, column=1, sticky="e")
+
+        save_button = ttk.Button(buttons, text="Save", style="Primary.TButton", command=self.ok)
+        save_button.grid(row=0, column=0, padx=(0, 8))
+        cancel_button = ttk.Button(buttons, text="Cancel", style="Secondary.TButton", command=self.cancel)
+        cancel_button.grid(row=0, column=1)
+        save_button.focus_set()
+
+        self.bind("<Return>", self.ok)
+        self.bind("<Escape>", self.cancel)
 
     def validate(self) -> bool:
         share_url = self.url_text.get("1.0", "end").strip()
@@ -107,50 +707,141 @@ class ShareUrlDialog(simpledialog.Dialog):
 
 class HowToRunDialog(simpledialog.Dialog):
     def body(self, master: tk.Misc) -> tk.Widget:
-        container = ttk.Frame(master, padding=8)
+        self.configure(bg=THEME["shell"])
+        if isinstance(master, tk.Widget):
+            master.configure(background=THEME["shell"])
+
+        container = ttk.Frame(master, style="Section.TFrame", padding=(16, 16, 16, 16))
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
 
         ttk.Label(
             container,
             text="راهنمای اجرای برنامه",
-            font=("Segoe UI Semibold", 11),
+            style="SectionTitle.TLabel",
             anchor="e",
             justify="right",
         ).grid(row=0, column=0, sticky="e", pady=(0, 8))
 
-        instructions_frame = ttk.Frame(container, padding=12, relief="solid", borderwidth=1)
+        instructions_frame = ttk.Frame(container, style="Card.TFrame", padding=(16, 16, 16, 16))
         instructions_frame.grid(row=1, column=0, sticky="ew")
         instructions_frame.columnconfigure(0, weight=1)
 
-        ttk.Label(
+        tk.Label(
             instructions_frame,
             text="\n".join(_rtl_line(line) for line in HOW_TO_RUN_TEXT.splitlines()),
             font=("Segoe UI", 10),
             justify="right",
             anchor="e",
             wraplength=620,
+            bg=THEME["card"],
+            fg=THEME["text"],
         ).grid(row=0, column=0, sticky="e")
         return None
 
     def buttonbox(self) -> None:
-        box = ttk.Frame(self)
-        box.pack(anchor="e", padx=8, pady=(0, 8))
+        box = ttk.Frame(self, style="Shell.TFrame", padding=(16, 0, 16, 16))
+        box.pack(fill="x")
 
-        close_button = ttk.Button(box, text="Close", command=self.cancel)
-        close_button.pack()
+        close_button = ttk.Button(box, text="Close", style="Secondary.TButton", command=self.cancel)
+        close_button.pack(anchor="e")
         close_button.focus_set()
         self.bind("<Return>", self.cancel)
         self.bind("<Escape>", self.cancel)
 
 
+class SupportUsDialog(simpledialog.Dialog):
+    def __init__(self, parent: tk.Misc, title: str, *, copy_callback: Callable[[], None]) -> None:
+        self._copy_callback = copy_callback
+        super().__init__(parent, title)
+
+    def body(self, master: tk.Misc) -> tk.Widget:
+        self.configure(bg=THEME["shell"])
+        if isinstance(master, tk.Widget):
+            master.configure(background=THEME["shell"])
+
+        container = ttk.Frame(master, style="Section.TFrame", padding=(16, 16, 16, 16))
+        container.grid(row=0, column=0, sticky="nsew")
+        container.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            container,
+            text="Support the Project",
+            style="SectionTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        message = (
+            "If RM SNI Spoofer helps you, you can support continued maintenance "
+            "by sending USDT on BEP20 to the address below."
+        )
+        tk.Label(
+            container,
+            text=message,
+            bg=THEME["card"],
+            fg=THEME["text"],
+            font=("Segoe UI", 10),
+            justify="left",
+            wraplength=520,
+            padx=16,
+            pady=16,
+        ).grid(row=1, column=0, sticky="ew")
+
+        address_wrap = ttk.Frame(container, style="Card.TFrame", padding=(16, 16, 16, 16))
+        address_wrap.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        address_wrap.columnconfigure(0, weight=1)
+
+        ttk.Label(address_wrap, text=DONATION_NETWORK_LABEL, style="CardLabel.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="w",
+            pady=(0, 8),
+        )
+        self._address_var = tk.StringVar(value=DONATION_ADDRESS)
+        address_entry = ttk.Entry(
+            address_wrap,
+            textvariable=self._address_var,
+            state="readonly",
+            style="Card.TEntry",
+        )
+        address_entry.grid(row=1, column=0, sticky="ew")
+        return address_entry
+
+    def buttonbox(self) -> None:
+        box = ttk.Frame(self, style="Shell.TFrame", padding=(16, 0, 16, 16))
+        box.pack(fill="x")
+        box.columnconfigure(0, weight=1)
+
+        buttons = ttk.Frame(box, style="Shell.TFrame")
+        buttons.grid(row=0, column=1, sticky="e")
+
+        copy_button = ttk.Button(buttons, text="Copy Address", style="Primary.TButton", command=self._copy_address)
+        copy_button.grid(row=0, column=0, padx=(0, 8))
+        close_button = ttk.Button(buttons, text="Close", style="Secondary.TButton", command=self.cancel)
+        close_button.grid(row=0, column=1)
+        copy_button.focus_set()
+
+        self.bind("<Return>", lambda _event: self._copy_address())
+        self.bind("<Escape>", self.cancel)
+
+    def _copy_address(self) -> None:
+        self._copy_callback()
+        messagebox.showinfo("Support Us", "The USDT (BEP20) address was copied to the clipboard.", parent=self)
+
+
 class ControlPanel(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("SNI-Spoofing Control Panel")
-        self.geometry("980x720")
-        self.minsize(860, 620)
+        self.title(APP_NAME)
+        self.geometry("1240x840")
+        self.minsize(1080, 720)
         self._window_icon: tk.PhotoImage | None = None
+        self._icon_cache: dict[str, tk.PhotoImage | None] = {}
+        self._private_font_paths: list[Path] = []
+        self._font_families: dict[str, str] = {}
+        self._relay_chip_frame: tk.Frame | None = None
+        self._relay_chip_dot: tk.Label | None = None
+        self._relay_chip_label: tk.Label | None = None
+        self._status_detail_label: ttk.Label | None = None
 
         self.process: subprocess.Popen[str] | None = None
         self.delay_test_in_progress = False
@@ -169,22 +860,466 @@ class ControlPanel(tk.Tk):
         self.log_level_var = tk.StringVar(value="warning")
         self.profile_status_var = tk.StringVar(value="No active Xray profile selected.")
         self.status_var = tk.StringVar(value="Stopped")
-        self.donation_address_var = tk.StringVar(value=DONATION_ADDRESS)
+        self.relay_chip_var = tk.StringVar(value="Stopped")
         self._context_menu_target: tk.Misc | None = None
 
+        self.status_var.trace_add("write", self._sync_status_widgets)
+        self._bootstrap_assets()
         self._configure_style()
         self._configure_icon()
         self._build_layout()
+        self.after(0, self._configure_window_frame)
         self._install_context_menus()
         self.load_form_from_disk()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._drain_log_queue)
 
+    def _bootstrap_assets(self) -> None:
+        self._register_private_fonts()
+        self._font_families = {
+            "body": self._resolve_font_family(
+                ("Inter 18pt", "Inter 24pt", "Inter"),
+                ("Segoe UI", "Arial", "TkDefaultFont"),
+            ),
+            "headline": self._resolve_font_family(
+                ("Inter 24pt SemiBold", "Inter 24pt Medium", "Inter 24pt", "Inter 18pt SemiBold"),
+                ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
+            ),
+            "title": self._resolve_font_family(
+                ("Inter 28pt SemiBold", "Inter 28pt Medium", "Inter 28pt", "Inter 24pt SemiBold"),
+                ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
+            ),
+            "label": self._resolve_font_family(
+                ("Geist Medium", "Geist SemiBold", "Geist"),
+                ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
+            ),
+            "button": self._resolve_font_family(
+                ("Inter 18pt Medium", "Inter 18pt SemiBold", "Inter 18pt", "Inter"),
+                ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
+            ),
+            "mono": self._resolve_font_family(
+                ("Geist Mono", "Cascadia Mono", "Cascadia Code", "Consolas"),
+                ("Courier New", "TkFixedFont"),
+            ),
+            "icon": self._resolve_font_family(
+                ("Segoe Fluent Icons", "Segoe MDL2 Assets"),
+                ("Segoe UI Symbol",),
+            ),
+        }
+
+    def _register_private_fonts(self) -> None:
+        if sys.platform != "win32":
+            return
+
+        try:
+            add_font_resource = ctypes.windll.gdi32.AddFontResourceExW
+        except Exception:
+            return
+
+        for font_path in _iter_private_font_paths():
+            try:
+                added_count = int(add_font_resource(str(font_path), WINDOWS_PRIVATE_FONT_FLAG, 0))
+            except Exception:
+                continue
+            if added_count > 0:
+                self._private_font_paths.append(font_path)
+
+    def _available_font_families(self) -> tuple[str, ...]:
+        families = tkfont.families(self)
+        return tuple(str(family) for family in families)
+
+    def _resolve_font_family(
+        self,
+        preferred_prefixes: tuple[str, ...],
+        fallback_families: tuple[str, ...],
+    ) -> str:
+        available_families = self._available_font_families()
+        lowered = {family.lower(): family for family in available_families}
+
+        for prefix in preferred_prefixes:
+            prefix_lower = prefix.lower()
+            exact_match = lowered.get(prefix_lower)
+            if exact_match is not None:
+                return exact_match
+            for family in available_families:
+                if family.lower().startswith(prefix_lower):
+                    return family
+
+        for fallback in fallback_families:
+            fallback_match = lowered.get(fallback.lower())
+            if fallback_match is not None:
+                return fallback_match
+        return fallback_families[0]
+
+    def _load_icon_image(self, icon_name: str, *, size: int = 16) -> tk.PhotoImage | None:
+        cache_key = f"{icon_name}:{size}"
+        if cache_key in self._icon_cache:
+            return self._icon_cache[cache_key]
+
+        icon_path = APP_ICONS_DIR / f"{icon_name}.svg"
+        image: tk.PhotoImage | None = None
+        if icon_path.is_file():
+            try:
+                image = tk.PhotoImage(file=str(icon_path))
+            except tk.TclError:
+                try:
+                    import cairosvg  # type: ignore
+                except Exception:
+                    image = None
+                else:
+                    try:
+                        png_bytes = cairosvg.svg2png(
+                            url=str(icon_path),
+                            output_width=size,
+                            output_height=size,
+                        )
+                        image = tk.PhotoImage(data=base64.b64encode(png_bytes).decode("ascii"))
+                    except Exception:
+                        image = None
+
+        self._icon_cache[cache_key] = image
+        return image
+
+    def _icon_glyph(self, icon_name: str) -> str:
+        return ICON_GLYPHS.get(icon_name, "")
+
+    def _decorate_button(self, button: ttk.Button, text: str, icon_name: str | None = None) -> None:
+        button.configure(text=text)
+        if icon_name is None:
+            return
+
+        image = self._load_icon_image(icon_name)
+        if image is None:
+            return
+
+        button.configure(image=image, compound="left")
+        button.image = image
+
+    def _build_icon_badge(self, parent: tk.Misc, icon_name: str) -> tk.Label:
+        glyph = self._icon_glyph(icon_name)
+        if glyph:
+            return tk.Label(
+                parent,
+                text=glyph,
+                bg=THEME["card"],
+                fg=THEME["muted_alt"],
+                font=(self._font_families["icon"], 12),
+            )
+
+        image = self._load_icon_image(icon_name)
+        if image is not None:
+            badge = tk.Label(parent, image=image, bg=THEME["card"])
+            badge.image = image
+            return badge
+
+        return tk.Label(
+            parent,
+            text=ICON_FALLBACK_TEXT.get(icon_name, icon_name).upper(),
+            bg=THEME["card"],
+            fg=THEME["accent_text"],
+            font=(self._font_families["label"], 7, "bold"),
+            padx=6,
+            pady=2,
+        )
+
+    def _runtime_label(self) -> str:
+        return "Bundled Build" if getattr(sys, "frozen", False) else "Source Build"
+
+    def _check_for_updates(self) -> None:
+        self._append_log("[updates] no update service is configured for this build")
+
+    def _copy_donation_address(self) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(DONATION_ADDRESS)
+        self._append_log("[support] donation address copied to clipboard")
+
+    def _show_support_dialog(self) -> None:
+        SupportUsDialog(self, "Support Us", copy_callback=self._copy_donation_address)
+
+    def _sync_status_widgets(self, *_args: str) -> None:
+        status_text = self.status_var.get().strip()
+        status_lower = status_text.lower()
+        chip_text = "RELAY IDLE"
+        dot_color = THEME["muted_alt"]
+        chip_bg = THEME["low"]
+        chip_border = THEME["border"]
+
+        if status_lower.startswith("running"):
+            chip_text = "RELAY ACTIVE"
+            dot_color = THEME["accent"]
+            chip_bg = THEME["accent_soft"]
+            chip_border = THEME["accent"]
+        elif status_lower.startswith("testing"):
+            chip_text = "TESTING"
+            dot_color = THEME["warning"]
+            chip_bg = THEME["accent_soft"]
+            chip_border = THEME["accent"]
+        elif status_lower.startswith("stopping"):
+            chip_text = "STOPPING"
+            dot_color = THEME["warning"]
+            chip_bg = THEME["accent_soft"]
+            chip_border = THEME["accent"]
+        elif status_lower.startswith("delay"):
+            chip_text = "DELAY TEST"
+            dot_color = THEME["warning"]
+
+        self.relay_chip_var.set(chip_text)
+        if self._relay_chip_dot is not None:
+            self._relay_chip_dot.configure(fg=dot_color, bg=chip_bg)
+        if self._relay_chip_label is not None:
+            self._relay_chip_label.configure(bg=chip_bg, fg=THEME["accent_text"] if chip_bg != THEME["low"] else THEME["muted_alt"])
+        if self._relay_chip_frame is not None:
+            self._relay_chip_frame.configure(bg=chip_bg, highlightbackground=chip_border)
+
+    def _style_menu(self, menu: tk.Menu) -> None:
+        menu.configure(
+            background=THEME["low"],
+            foreground=THEME["text"],
+            activebackground=THEME["accent_soft"],
+            activeforeground=THEME["text"],
+            disabledforeground=THEME["muted"],
+            relief="flat",
+            borderwidth=1,
+        )
+
+    def _configure_button_style(
+        self,
+        style: ttk.Style,
+        style_name: str,
+        *,
+        background: str,
+        foreground: str,
+        bordercolor: str,
+        active_background: str,
+        disabled_background: str,
+    ) -> None:
+        style.configure(
+            style_name,
+            background=background,
+            foreground=foreground,
+            bordercolor=bordercolor,
+            lightcolor=bordercolor,
+            darkcolor=bordercolor,
+            padding=(14, 9),
+            relief="flat",
+            focusthickness=0,
+            font=(self._font_families["body"], 10, "bold"),
+        )
+        style.map(
+            style_name,
+            background=[
+                ("disabled", disabled_background),
+                ("pressed", active_background),
+                ("active", active_background),
+            ],
+            foreground=[("disabled", THEME["muted"])],
+            bordercolor=[("active", THEME["accent"]), ("focus", THEME["accent"])],
+        )
+
     def _configure_style(self) -> None:
         style = ttk.Style(self)
-        if "vista" in style.theme_names():
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        elif "vista" in style.theme_names():
             style.theme_use("vista")
+
+        self.configure(bg=THEME["base_bg"])
+
+        style.configure(
+            ".",
+            background=THEME["shell"],
+            foreground=THEME["text"],
+            font=(self._font_families["body"], 10),
+        )
+        style.configure("TFrame", background=THEME["shell"])
+        style.configure("Shell.TFrame", background=THEME["shell"])
+        style.configure("Sidebar.TFrame", background=THEME["low"])
+        style.configure("Main.TFrame", background=THEME["shell"])
+        style.configure("Section.TFrame", background=THEME["card"])
+        style.configure("Card.TFrame", background=THEME["card"])
+        style.configure("CardInner.TFrame", background=THEME["low"])
+
+        style.configure(
+            "AppTitle.TLabel",
+            background=THEME["shell"],
+            foreground=THEME["accent_text"],
+            font=(self._font_families["title"], 20, "bold"),
+        )
+        style.configure(
+            "SidebarTitle.TLabel",
+            background=THEME["low"],
+            foreground=THEME["accent_text"],
+            font=(self._font_families["body"], 17, "bold"),
+        )
+        style.configure(
+            "SectionTitle.TLabel",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            font=(self._font_families["headline"], 14, "bold"),
+        )
+        style.configure(
+            "Body.TLabel",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            font=(self._font_families["body"], 10),
+        )
+        style.configure(
+            "Muted.TLabel",
+            background=THEME["card"],
+            foreground=THEME["muted"],
+            font=(self._font_families["body"], 9),
+        )
+        style.configure(
+            "SidebarMeta.TLabel",
+            background=THEME["low"],
+            foreground=THEME["muted_alt"],
+            font=(self._font_families["label"], 8),
+        )
+        style.configure(
+            "CardLabel.TLabel",
+            background=THEME["card"],
+            foreground=THEME["muted_alt"],
+            font=(self._font_families["label"], 8, "bold"),
+        )
+        style.configure(
+            "StatusDetail.TLabel",
+            background=THEME["card"],
+            foreground=THEME["muted"],
+            font=(self._font_families["body"], 9),
+        )
+
+        self._configure_button_style(
+            style,
+            "Primary.TButton",
+            background=THEME["accent"],
+            foreground=THEME["base_bg"],
+            bordercolor=THEME["accent"],
+            active_background="#ff7d24",
+            disabled_background=THEME["strong"],
+        )
+        self._configure_button_style(
+            style,
+            "Secondary.TButton",
+            background=THEME["card"],
+            foreground=THEME["text"],
+            bordercolor=THEME["border"],
+            active_background=THEME["hover"],
+            disabled_background=THEME["strong"],
+        )
+        self._configure_button_style(
+            style,
+            "SidebarAction.TButton",
+            background=THEME["low"],
+            foreground=THEME["text"],
+            bordercolor=THEME["border"],
+            active_background=THEME["hover"],
+            disabled_background=THEME["strong"],
+        )
+        self._configure_button_style(
+            style,
+            "NavActive.TButton",
+            background=THEME["accent_soft"],
+            foreground=THEME["accent_text"],
+            bordercolor=THEME["accent"],
+            active_background="#38251b",
+            disabled_background=THEME["accent_soft"],
+        )
+
+        style.configure(
+            "Card.TEntry",
+            foreground=THEME["text"],
+            fieldbackground=THEME["low"],
+            background=THEME["low"],
+            bordercolor=THEME["input_border"],
+            lightcolor=THEME["input_border"],
+            darkcolor=THEME["input_border"],
+            insertcolor=THEME["text"],
+            padding=(10, 7),
+            relief="flat",
+            font=(self._font_families["mono"], 11),
+        )
+        style.map(
+            "Card.TEntry",
+            bordercolor=[("focus", THEME["accent"]), ("disabled", THEME["input_border"])],
+            lightcolor=[("focus", THEME["accent"])],
+            darkcolor=[("focus", THEME["accent"])],
+            fieldbackground=[("readonly", THEME["low"]), ("disabled", THEME["low"])],
+        )
+        style.configure(
+            "Card.TCombobox",
+            foreground=THEME["text"],
+            fieldbackground=THEME["low"],
+            background=THEME["low"],
+            bordercolor=THEME["input_border"],
+            lightcolor=THEME["input_border"],
+            darkcolor=THEME["input_border"],
+            arrowcolor=THEME["accent_text"],
+            padding=(10, 7),
+            relief="flat",
+            font=(self._font_families["mono"], 10),
+        )
+        style.map(
+            "Card.TCombobox",
+            bordercolor=[("focus", THEME["accent"]), ("readonly", THEME["input_border"])],
+            lightcolor=[("focus", THEME["accent"])],
+            darkcolor=[("focus", THEME["accent"])],
+            fieldbackground=[("readonly", THEME["low"]), ("disabled", THEME["low"])],
+            selectbackground=[("readonly", THEME["low"])],
+            selectforeground=[("readonly", THEME["text"])],
+        )
+
+        style.configure(
+            "Profiles.Treeview",
+            background=THEME["card"],
+            fieldbackground=THEME["card"],
+            foreground=THEME["text"],
+            bordercolor=THEME["input_border"],
+            lightcolor=THEME["input_border"],
+            darkcolor=THEME["input_border"],
+            rowheight=38,
+            relief="flat",
+            font=(self._font_families["body"], 10),
+        )
+        style.map(
+            "Profiles.Treeview",
+            background=[("selected", THEME["selection"])],
+            foreground=[("selected", THEME["text"])],
+        )
+        style.configure(
+            "Profiles.Treeview.Heading",
+            background=THEME["card"],
+            foreground=THEME["muted_alt"],
+            relief="flat",
+            padding=(8, 6),
+            font=(self._font_families["label"], 8, "bold"),
+        )
+        style.map(
+            "Profiles.Treeview.Heading",
+            background=[("active", THEME["card"])],
+            foreground=[("active", THEME["text"])],
+        )
+
+        style.configure(
+            "Shell.Vertical.TScrollbar",
+            background=THEME["card"],
+            troughcolor=THEME["base_bg"],
+            bordercolor=THEME["base_bg"],
+            arrowcolor=THEME["muted"],
+            relief="flat",
+            arrowsize=8,
+            width=8,
+        )
+        style.configure(
+            "Shell.Horizontal.TScrollbar",
+            background=THEME["card"],
+            troughcolor=THEME["base_bg"],
+            bordercolor=THEME["base_bg"],
+            arrowcolor=THEME["muted"],
+            relief="flat",
+            arrowsize=8,
+            width=8,
+        )
 
     def _configure_icon(self) -> None:
         try:
@@ -202,6 +1337,21 @@ class ControlPanel(tk.Tk):
             return
         self.iconphoto(True, self._window_icon)
 
+    def _configure_window_frame(self) -> None:
+        if sys.platform != "win32":
+            return
+
+        try:
+            corner_preference = ctypes.c_int(DWMWCP_ROUND)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                self.winfo_id(),
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                ctypes.byref(corner_preference),
+                ctypes.sizeof(corner_preference),
+            )
+        except Exception:
+            return
+
     def _show_how_to_run_dialog(self) -> None:
         HowToRunDialog(self, "راهنمای اجرا")
 
@@ -209,108 +1359,274 @@ class ControlPanel(tk.Tk):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
 
-        container = ttk.Frame(self, padding=16)
-        container.grid(row=0, column=0, sticky="nsew")
-        container.columnconfigure(0, weight=1)
-        container.rowconfigure(3, weight=1)
+        shell = tk.Frame(self, bg=THEME["base_bg"])
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(1, weight=1)
+        shell.rowconfigure(0, weight=1)
 
-        header = ttk.Frame(container)
+        sidebar = tk.Frame(
+            shell,
+            bg=THEME["low"],
+            width=248,
+            highlightbackground=THEME["border"],
+            highlightthickness=0,
+            bd=0,
+        )
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
+        sidebar.rowconfigure(2, weight=1)
+        self._build_sidebar(sidebar)
+
+        main_shell = tk.Frame(shell, bg=THEME["shell"])
+        main_shell.grid(row=0, column=1, sticky="nsew")
+        main_shell.columnconfigure(0, weight=1)
+        main_shell.rowconfigure(1, weight=1)
+
+        main = ttk.Frame(main_shell, style="Main.TFrame", padding=(24, 18, 24, 24))
+        main.grid(row=1, column=0, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=2, minsize=190)
+        main.rowconfigure(2, weight=5, minsize=300)
+        main.rowconfigure(4, weight=3, minsize=220)
+
+        self._build_settings_section(main)
+        self._build_profiles_section(main)
+        self._build_actions_section(main)
+        self._build_logs_section(main)
+        self._sync_status_widgets()
+        self._sync_button_state()
+
+    def _build_sidebar(self, parent: tk.Frame) -> None:
+        brand = tk.Frame(parent, bg=THEME["low"], padx=20, pady=18)
+        brand.grid(row=0, column=0, sticky="ew")
+        brand.columnconfigure(0, weight=1)
+
+        ttk.Label(brand, text=APP_NAME, style="SidebarTitle.TLabel").grid(row=0, column=0, sticky="w")
+
+
+        tk.Label(
+            brand,
+            text=self._runtime_label(),
+            bg=THEME["low"],
+            fg=THEME["muted_alt"],
+            font=(self._font_families["label"], 8),
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        nav = tk.Frame(parent, bg=THEME["low"], padx=10, pady=8)
+        nav.grid(row=1, column=0, sticky="ew")
+        nav.columnconfigure(0, weight=1)
+
+        dashboard_button = SurfaceButton(
+            nav,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Dashboard",
+            icon_glyph=self._icon_glyph("dashboard"),
+            variant="nav_active",
+            command=lambda: None,
+        )
+        dashboard_button.grid(row=0, column=0, sticky="ew")
+
+        footer = tk.Frame(parent, bg=THEME["low"], padx=14, pady=14)
+        footer.grid(row=3, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+
+        help_button = tk.Label(
+            footer,
+            text=self._icon_glyph("help"),
+            bg=THEME["low"],
+            fg=THEME["muted"],
+            font=(self._font_families["icon"], 18),
+            cursor="hand2",
+            padx=2,
+        )
+        help_button.grid(row=0, column=0, sticky="w", pady=(0, 8))
+        help_button.bind("<Button-1>", lambda _event: self._show_how_to_run_dialog(), add="+")
+        help_button.bind("<Enter>", lambda _event: help_button.configure(fg=THEME["accent_text"]), add="+")
+        help_button.bind("<Leave>", lambda _event: help_button.configure(fg=THEME["muted"]), add="+")
+
+        updates_button = SurfaceButton(
+            footer,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Check Updates",
+            icon_glyph=self._icon_glyph("refresh"),
+            variant="sidebar_primary",
+            command=self._check_for_updates,
+        )
+        updates_button.grid(row=1, column=0, sticky="ew")
+
+        support_button = SurfaceButton(
+            footer,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Support Us",
+            icon_glyph=self._icon_glyph("volunteer"),
+            variant="sidebar_outline",
+            command=self._show_support_dialog,
+        )
+        support_button.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+    def _build_header(self, parent: ttk.Frame) -> None:
+        header = tk.Frame(parent, bg=THEME["shell"], padx=24, pady=14)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="RM SNI Spoofer", font=("Segoe UI Semibold", 18)).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Button(header, text="نحوه اجرا", command=self._show_how_to_run_dialog).grid(
-            row=0, column=1, sticky="e"
-        )
-        ttk.Label(
-            header,
-            text="اگر از این برنامه خوشتان آمد، می‌توانید با حمایت مالی از آن پشتیبانی کنید:",
-            foreground="#4b5563",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
-        donation_frame = ttk.Frame(header)
-        donation_frame.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        donation_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(donation_frame, text=DONATION_NETWORK_LABEL).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        donation_entry = ttk.Entry(
-            donation_frame,
-            textvariable=self.donation_address_var,
-            state="readonly",
-            font=("Consolas", 10),
+    def _build_settings_section(self, parent: ttk.Frame) -> None:
+        shell = RoundedPanel(
+            parent,
+            fill=THEME["card"],
+            border=THEME["border"],
+            radius=18,
+            padding=(16, 16, 16, 16),
         )
-        donation_entry.grid(row=0, column=1, sticky="ew")
+        shell.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        section = shell.content
+        for column in range(4):
+            section.columnconfigure(column, weight=1)
 
-        settings_frame = ttk.LabelFrame(container, text="Editable Settings", padding=12)
-        settings_frame.grid(row=1, column=0, sticky="ew", pady=(16, 12))
-        settings_frame.columnconfigure(1, weight=1)
-        settings_frame.columnconfigure(3, weight=1)
-        settings_frame.rowconfigure(3, weight=1)
+        header = ttk.Frame(section, style="Section.TFrame")
+        header.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        header.columnconfigure(0, weight=1)
 
-        ttk.Label(settings_frame, text="CONNECT IP").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=6)
-        ttk.Entry(settings_frame, textvariable=self.connect_ip_var).grid(
-            row=0, column=1, sticky="ew", pady=6
+        ttk.Label(header, text="Editable Settings", style="SectionTitle.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="w",
         )
 
-        ttk.Label(settings_frame, text="FAKE SNI").grid(row=0, column=2, sticky="w", padx=(16, 8), pady=6)
-        ttk.Entry(settings_frame, textvariable=self.fake_sni_var).grid(
-            row=0, column=3, sticky="ew", pady=6
-        )
-
-        ttk.Label(settings_frame, text="SOCKS PORT").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=6
-        )
-        ttk.Entry(settings_frame, textvariable=self.socks_port_var).grid(
-            row=1, column=1, sticky="ew", pady=6
-        )
-
-        ttk.Label(settings_frame, text="HTTP PORT").grid(
-            row=1, column=2, sticky="w", padx=(16, 8), pady=6
-        )
-        ttk.Entry(settings_frame, textvariable=self.http_port_var).grid(
-            row=1, column=3, sticky="ew", pady=6
-        )
-
-        ttk.Label(settings_frame, text="LOG LEVEL").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=6
+        log_level_wrap = ttk.Frame(header, style="Section.TFrame")
+        log_level_wrap.grid(row=0, column=1, sticky="e")
+        ttk.Label(log_level_wrap, text="XRAY LOG LEVEL", style="CardLabel.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="e",
+            padx=(0, 8),
         )
         self.log_level_combo = ttk.Combobox(
-            settings_frame,
+            log_level_wrap,
             state="readonly",
             textvariable=self.log_level_var,
             values=XRAY_LOG_LEVELS,
+            style="Card.TCombobox",
+            width=12,
         )
-        self.log_level_combo.grid(row=2, column=1, sticky="ew", pady=6)
+        self.log_level_combo.grid(row=0, column=1, sticky="e")
 
-        ttk.Label(settings_frame, text="XRAY Profiles").grid(row=3, column=0, sticky="nw", padx=(0, 8), pady=(10, 6))
-        profiles_frame = ttk.Frame(settings_frame)
-        profiles_frame.grid(row=3, column=1, columnspan=3, sticky="nsew", pady=(10, 6))
-        profiles_frame.columnconfigure(0, weight=1)
-        profiles_frame.rowconfigure(1, weight=1)
+        self._build_settings_card(section, 1, 0, "CONNECT IP", self.connect_ip_var, "lan")
+        self._build_settings_card(section, 1, 1, "FAKE SNI", self.fake_sni_var, "public")
+        self._build_settings_card(section, 1, 2, "SOCKS PORT", self.socks_port_var, "usb")
+        self._build_settings_card(section, 1, 3, "HTTP PORT", self.http_port_var, "usb")
 
-        profile_actions = ttk.Frame(profiles_frame)
-        profile_actions.grid(row=0, column=0, sticky="w", pady=(0, 6))
+    def _build_settings_card(
+        self,
+        parent: ttk.Frame,
+        row: int,
+        column: int,
+        label_text: str,
+        variable: tk.StringVar,
+        icon_name: str,
+    ) -> None:
+        card = tk.Frame(
+            parent,
+            bg=THEME["card"],
+            highlightbackground=THEME["border"],
+            highlightthickness=1,
+            padx=12,
+            pady=10,
+        )
+        left_pad = 0 if column == 0 else 8
+        right_pad = 0 if column == 3 else 8
+        card.grid(row=row, column=column, sticky="ew", padx=(left_pad, right_pad), pady=4)
+        card.columnconfigure(0, weight=1)
 
-        self.profile_add_button = ttk.Button(profile_actions, text="Add", command=self._add_profile)
+        top = tk.Frame(card, bg=THEME["card"])
+        top.grid(row=0, column=0, sticky="ew")
+        top.columnconfigure(0, weight=1)
+
+        ttk.Label(top, text=label_text, style="CardLabel.TLabel").grid(row=0, column=0, sticky="w")
+        badge = self._build_icon_badge(top, icon_name)
+        badge.grid(row=0, column=1, sticky="e")
+        ttk.Entry(card, textvariable=variable, style="Card.TEntry").grid(row=1, column=0, sticky="ew", pady=(10, 0))
+
+    def _build_profiles_section(self, parent: ttk.Frame) -> None:
+        shell = RoundedPanel(
+            parent,
+            fill=THEME["card"],
+            border=THEME["border"],
+            radius=18,
+            padding=(16, 16, 16, 16),
+        )
+        shell.grid(row=2, column=0, sticky="nsew", pady=(0, 16))
+        section = shell.content
+        section.columnconfigure(0, weight=1)
+        section.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(section, style="Section.TFrame")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        header.columnconfigure(0, weight=1)
+
+        title_wrap = tk.Frame(header, bg=THEME["card"])
+        title_wrap.grid(row=0, column=0, sticky="w")
+        tk.Label(
+            title_wrap,
+            text=self._icon_glyph("dashboard"),
+            bg=THEME["card"],
+            fg=THEME["accent_text"],
+            font=(self._font_families["icon"], 12),
+            padx=0,
+        ).pack(side="left")
+        ttk.Label(title_wrap, text="Xray Profiles", style="SectionTitle.TLabel").pack(side="left", padx=(8, 0))
+
+        actions = tk.Frame(header, bg=THEME["card"])
+        actions.grid(row=0, column=1, sticky="e")
+
+        self.profile_add_button = SurfaceButton(
+            actions,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Add Profile",
+            variant="primary",
+            command=self._add_profile,
+        )
         self.profile_add_button.grid(row=0, column=0, padx=(0, 8))
 
-        self.profile_edit_button = ttk.Button(profile_actions, text="Edit", command=self._edit_selected_profile)
+        self.profile_edit_button = SurfaceButton(
+            actions,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Edit",
+            variant="secondary",
+            command=self._edit_selected_profile,
+        )
         self.profile_edit_button.grid(row=0, column=1, padx=(0, 8))
 
-        self.profile_remove_button = ttk.Button(profile_actions, text="Remove", command=self._remove_selected_profiles)
+        self.profile_remove_button = SurfaceButton(
+            actions,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Remove",
+            variant="secondary",
+            command=self._remove_selected_profiles,
+        )
         self.profile_remove_button.grid(row=0, column=2, padx=(0, 8))
 
-        self.profile_set_active_button = ttk.Button(
-            profile_actions,
+        self.profile_set_active_button = SurfaceButton(
+            actions,
+            theme=THEME,
+            fonts=self._font_families,
             text="Set Active",
+            variant="secondary",
             command=self._set_selected_profile_active,
         )
         self.profile_set_active_button.grid(row=0, column=3)
 
-        profile_table_frame = ttk.Frame(profiles_frame)
-        profile_table_frame.grid(row=1, column=0, sticky="nsew")
-        profile_table_frame.columnconfigure(0, weight=1)
-        profile_table_frame.rowconfigure(0, weight=1)
+        table_frame = ttk.Frame(section, style="Section.TFrame")
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
 
         profile_columns = (
             "active",
@@ -324,11 +1640,12 @@ class ControlPanel(tk.Tk):
             "status",
         )
         self.profile_tree = ttk.Treeview(
-            profile_table_frame,
+            table_frame,
             columns=profile_columns,
             show="headings",
             selectmode="extended",
-            height=7,
+            height=11,
+            style="Profiles.Treeview",
         )
         self.profile_tree.heading("active", text="Active")
         self.profile_tree.heading("remark", text="Remark")
@@ -339,92 +1656,216 @@ class ControlPanel(tk.Tk):
         self.profile_tree.heading("security", text="Security")
         self.profile_tree.heading("delay", text="Delay")
         self.profile_tree.heading("status", text="Status")
-        self.profile_tree.column("active", width=70, anchor="center", stretch=False)
+        self.profile_tree.column("active", width=74, anchor="center", stretch=False)
         self.profile_tree.column("remark", width=180, stretch=True)
-        self.profile_tree.column("protocol", width=80, anchor="center", stretch=False)
-        self.profile_tree.column("address", width=200, stretch=True)
+        self.profile_tree.column("protocol", width=84, anchor="center", stretch=False)
+        self.profile_tree.column("address", width=220, stretch=True)
         self.profile_tree.column("port", width=70, anchor="center", stretch=False)
         self.profile_tree.column("transport", width=90, anchor="center", stretch=False)
         self.profile_tree.column("security", width=90, anchor="center", stretch=False)
         self.profile_tree.column("delay", width=90, anchor="center", stretch=False)
         self.profile_tree.column("status", width=110, anchor="center", stretch=False)
         self.profile_tree.grid(row=0, column=0, sticky="nsew")
-        self.profile_tree.tag_configure("active_profile", background="#e0f2fe")
-        self.profile_tree.tag_configure("queued_profile", foreground="#6b7280")
-        self.profile_tree.tag_configure("testing_profile", foreground="#b45309")
-        self.profile_tree.tag_configure("success_profile", foreground="#15803d")
-        self.profile_tree.tag_configure("error_profile", foreground="#b91c1c")
+        self.profile_tree.tag_configure(
+            "active_profile",
+            background=THEME["selection"],
+            foreground=THEME["accent_text"],
+        )
+        self.profile_tree.tag_configure("queued_profile", foreground=THEME["muted"])
+        self.profile_tree.tag_configure("testing_profile", foreground=THEME["warning"])
+        self.profile_tree.tag_configure("success_profile", foreground=THEME["success"])
+        self.profile_tree.tag_configure("error_profile", foreground=THEME["error"])
         self.profile_tree.bind("<<TreeviewSelect>>", self._on_profile_selection_changed, add="+")
         self.profile_tree.bind("<Double-1>", self._on_profile_double_click, add="+")
 
         profile_scroll_y = ttk.Scrollbar(
-            profile_table_frame,
+            table_frame,
             orient="vertical",
             command=self.profile_tree.yview,
+            style="Shell.Vertical.TScrollbar",
         )
         profile_scroll_y.grid(row=0, column=1, sticky="ns")
         self.profile_tree.configure(yscrollcommand=profile_scroll_y.set)
 
         profile_scroll_x = ttk.Scrollbar(
-            profile_table_frame,
+            table_frame,
             orient="horizontal",
             command=self.profile_tree.xview,
+            style="Shell.Horizontal.TScrollbar",
         )
         profile_scroll_x.grid(row=1, column=0, sticky="ew")
         self.profile_tree.configure(xscrollcommand=profile_scroll_x.set)
 
-        ttk.Label(
-            profiles_frame,
-            textvariable=self.profile_status_var,
-            foreground="#4b5563",
-        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(section, textvariable=self.profile_status_var, style="StatusDetail.TLabel").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            pady=(10, 0),
+        )
 
-        actions = ttk.Frame(container)
-        actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
-        actions.columnconfigure(4, weight=1)
+    def _build_actions_section(self, parent: ttk.Frame) -> None:
+        section = ttk.Frame(parent, style="Main.TFrame", padding=(0, 0, 0, 0))
+        section.grid(row=3, column=0, sticky="ew", pady=(0, 16))
+        section.columnconfigure(0, weight=1)
 
-        self.start_button = ttk.Button(actions, text="Start Relay", command=self.start_relay)
+        divider = tk.Frame(section, bg=THEME["border"], height=1)
+        divider.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+
+        buttons = tk.Frame(section, bg=THEME["shell"])
+        buttons.grid(row=1, column=0, sticky="w")
+
+        self.start_button = SurfaceButton(
+            buttons,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Start Relay",
+            icon_glyph=self._icon_glyph("bolt"),
+            variant="primary",
+            command=self.start_relay,
+        )
         self.start_button.grid(row=0, column=0, padx=(0, 8))
 
-        self.stop_button = ttk.Button(actions, text="Stop Relay", command=self.stop_relay)
+        self.stop_button = SurfaceButton(
+            buttons,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Stop Relay",
+            icon_glyph=self._icon_glyph("stop_circle"),
+            variant="secondary",
+            command=self.stop_relay,
+        )
         self.stop_button.grid(row=0, column=1, padx=(0, 8))
 
-        self.test_delay_button = ttk.Button(actions, text="Test Delay", command=self.test_delay)
+        self.test_delay_button = SurfaceButton(
+            buttons,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Test Delay",
+            icon_glyph=self._icon_glyph("speed"),
+            variant="secondary",
+            command=self.test_delay,
+        )
         self.test_delay_button.grid(row=0, column=2, padx=(0, 8))
 
-        ttk.Button(actions, text="Clear Logs", command=self.clear_logs).grid(row=0, column=3)
-
-        ttk.Label(actions, textvariable=self.status_var, foreground="#1d4ed8").grid(
-            row=0, column=4, sticky="e"
+        clear_logs_button = SurfaceButton(
+            buttons,
+            theme=THEME,
+            fonts=self._font_families,
+            text="Clear Logs",
+            icon_glyph=self._icon_glyph("delete"),
+            variant="secondary",
+            command=self.clear_logs,
         )
+        clear_logs_button.grid(row=0, column=3)
 
-        logs_frame = ttk.LabelFrame(container, text="Relay Logs", padding=12)
-        logs_frame.grid(row=3, column=0, sticky="nsew")
-        logs_frame.columnconfigure(0, weight=1)
-        logs_frame.rowconfigure(0, weight=1)
+        status_wrap = tk.Frame(section, bg=THEME["shell"])
+        status_wrap.grid(row=1, column=5, sticky="w", pady=(12, 0))
+        status_wrap.columnconfigure(0, weight=1)
+
+        self._status_detail_label = ttk.Label(status_wrap, textvariable=self.status_var, style="StatusDetail.TLabel")
+        self._status_detail_label.grid(row=0, column=0, sticky="w")
+
+        self._relay_chip_frame = tk.Frame(
+            status_wrap,
+            bg=THEME["low"],
+            highlightbackground=THEME["border"],
+            highlightthickness=1,
+            padx=10,
+            pady=5,
+        )
+        self._relay_chip_frame.grid(row=0, column=1, sticky="w", pady=(8, 0))
+        self._relay_chip_dot = tk.Label(
+            self._relay_chip_frame,
+            text="●",
+            bg=THEME["low"],
+            fg=THEME["muted"],
+            font=(self._font_families["body"], 8, "bold"),
+        )
+        self._relay_chip_dot.pack(side="left")
+        self._relay_chip_label = tk.Label(
+            self._relay_chip_frame,
+            textvariable=self.relay_chip_var,
+            bg=THEME["low"],
+            fg=THEME["text"],
+            font=(self._font_families["label"], 8, "bold"),
+            padx=6,
+        )
+        self._relay_chip_label.pack(side="left")
+
+    def _build_logs_section(self, parent: ttk.Frame) -> None:
+        shell = RoundedPanel(
+            parent,
+            fill=THEME["card"],
+            border=THEME["border"],
+            radius=18,
+            padding=(16, 16, 16, 16),
+        )
+        shell.grid(row=4, column=0, sticky="nsew")
+        section = shell.content
+        section.columnconfigure(0, weight=1)
+        section.rowconfigure(1, weight=1)
+
+        header = tk.Frame(section, bg=THEME["low"], height=28)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.grid_propagate(False)
+        tk.Label(
+            header,
+            text="Relay Logs",
+            bg=THEME["low"],
+            fg=THEME["muted_alt"],
+            font=(self._font_families["label"], 8, "bold"),
+            anchor="w",
+            padx=14,
+        ).pack(side="left", fill="y")
+        tk.Label(
+            header,
+            text="● ● ●",
+            bg=THEME["low"],
+            fg=THEME["strong"],
+            font=(self._font_families["body"], 8),
+            padx=12,
+        ).pack(side="right", fill="y")
 
         self.log_text = tk.Text(
-            logs_frame,
+            section,
             wrap="none",
             state="disabled",
-            font=("Consolas", 10),
-            background="#f8fafc",
-            relief="solid",
-            borderwidth=1,
+            font=(self._font_families["mono"], 10),
+            background=THEME["log_bg"],
+            foreground=THEME["text"],
+            insertbackground=THEME["text"],
+            selectbackground=THEME["selection"],
+            relief="flat",
+            borderwidth=0,
+            padx=14,
+            pady=12,
         )
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        self.log_text.tag_configure("delay_error", foreground="#b91c1c")
-        self.log_text.tag_configure("delay_success", foreground="#15803d")
+        self.log_text.grid(row=1, column=0, sticky="nsew")
+        self.log_text.tag_configure("delay_error", foreground=THEME["error"])
+        self.log_text.tag_configure("delay_success", foreground=THEME["success"])
+        self.log_text.tag_configure("log_start", foreground=THEME["accent_text"])
+        self.log_text.tag_configure("log_stop", foreground=THEME["warning"])
+        self.log_text.tag_configure("log_exit", foreground=THEME["error"])
+        self.log_text.tag_configure("log_delay", foreground=THEME["warning"])
+        self.log_text.tag_configure("log_meta", foreground=THEME["muted_alt"])
 
-        log_scroll_y = ttk.Scrollbar(logs_frame, orient="vertical", command=self.log_text.yview)
-        log_scroll_y.grid(row=0, column=1, sticky="ns")
+        log_scroll_y = ttk.Scrollbar(
+            section,
+            orient="vertical",
+            command=self.log_text.yview,
+            style="Shell.Vertical.TScrollbar",
+        )
+        log_scroll_y.grid(row=1, column=1, sticky="ns")
         self.log_text.configure(yscrollcommand=log_scroll_y.set)
 
-        log_scroll_x = ttk.Scrollbar(logs_frame, orient="horizontal", command=self.log_text.xview)
-        log_scroll_x.grid(row=1, column=0, sticky="ew")
+        log_scroll_x = ttk.Scrollbar(
+            section,
+            orient="horizontal",
+            command=self.log_text.xview,
+            style="Shell.Horizontal.TScrollbar",
+        )
+        log_scroll_x.grid(row=2, column=0, sticky="ew")
         self.log_text.configure(xscrollcommand=log_scroll_x.set)
-
-        self._sync_button_state()
 
     def _install_context_menus(self) -> None:
         self._editable_context_menu = tk.Menu(self, tearoff=False)
@@ -446,6 +1887,10 @@ class ControlPanel(tk.Tk):
         self._profile_context_menu.add_command(label="Edit", command=self._edit_selected_profile)
         self._profile_context_menu.add_command(label="Set As Active", command=self._set_selected_profile_active)
         self._profile_context_menu.add_command(label="Test Delay", command=self.test_delay)
+
+        self._style_menu(self._editable_context_menu)
+        self._style_menu(self._readonly_context_menu)
+        self._style_menu(self._profile_context_menu)
 
         self._bind_context_menu_classes()
         self.profile_tree.bind("<Button-3>", self._show_profile_context_menu, add="+")
@@ -603,7 +2048,7 @@ class ControlPanel(tk.Tk):
     def _profile_row_values(self, profile: dict[str, object]) -> tuple[str, ...]:
         profile_id = str(profile["id"])
         return (
-            "Yes" if profile_id == self.active_profile_id else "",
+            "●" if profile_id == self.active_profile_id else "",
             str(profile.get("tag", "")) or "(untitled)",
             str(profile.get("protocol", "")).upper(),
             str(profile.get("address", "")),
@@ -1055,10 +2500,21 @@ class ControlPanel(tk.Tk):
 
     def _append_log(self, message: str, tag: str | None = None) -> None:
         self.log_text.configure(state="normal")
-        if tag is None:
-            self.log_text.insert("end", f"{message}\n")
-        else:
+        if tag is not None:
             self.log_text.insert("end", f"{message}\n", tag)
+        elif not message:
+            self.log_text.insert("end", "\n")
+        else:
+            prefix_tag = _status_prefix_tag(message)
+            if prefix_tag is None:
+                self.log_text.insert("end", f"{message}\n")
+            else:
+                match = re.match(r"^(\[[^\]]+\])(.*)$", message)
+                if match is None:
+                    self.log_text.insert("end", f"{message}\n")
+                else:
+                    self.log_text.insert("end", match.group(1), prefix_tag)
+                    self.log_text.insert("end", f"{match.group(2)}\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
