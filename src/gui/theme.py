@@ -16,7 +16,6 @@ APP_ROOT = Path(get_app_dir())
 APP_ICON_ICO_PATH = get_asset_path("logo.ico")
 APP_ICON_PNG_PATH = get_asset_path("logo.png")
 APP_FONTS_DIR = get_asset_path("fonts")
-APP_ICONS_DIR = get_asset_path("icons")
 WINDOWS_PRIVATE_FONT_FLAG = 0x10
 
 THEME = {
@@ -79,7 +78,6 @@ __all__ = [
     "APP_ICON_ICO_PATH",
     "APP_ICON_PNG_PATH",
     "APP_FONTS_DIR",
-    "APP_ICONS_DIR",
     "WINDOWS_PRIVATE_FONT_FLAG",
     "THEME",
     "ICON_FALLBACK_TEXT",
@@ -95,13 +93,13 @@ __all__ = [
 
 def iter_private_font_paths() -> list[Path]:
     font_paths: list[Path] = []
-    for font_dir in (
-        APP_FONTS_DIR / "Inter" / "static",
-        APP_FONTS_DIR / "Geist" / "static",
+    for font_path in (
+        APP_FONTS_DIR / "Inter" / "Inter-VariableFont_opsz,wght.ttf",
+        APP_FONTS_DIR / "Geist" / "Geist-VariableFont_wght.ttf",
     ):
-        if not font_dir.is_dir():
+        if not font_path.is_file():
             continue
-        font_paths.extend(sorted(font_dir.glob("*.ttf")))
+        font_paths.append(font_path)
     return font_paths
 
 

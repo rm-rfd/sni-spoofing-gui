@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import ctypes
 from pathlib import Path
 import queue
@@ -23,7 +22,6 @@ from src.gui.dialogs import (
 )
 from src.gui.theme import (
     APP_ICON_ICO_PATH,
-    APP_ICONS_DIR,
     APP_ICON_PNG_PATH,
     APP_NAME,
     APP_VERSION,
@@ -48,7 +46,6 @@ class ControlPanel(tk.Tk):
         self.geometry("1240x840")
         self.minsize(1080, 720)
         self._window_icon: tk.PhotoImage | None = None
-        self._icon_cache: dict[str, tk.PhotoImage | None] = {}
         self._private_font_paths: list[Path] = []
         self._font_families: dict[str, str] = {}
         self._relay_chip_frame: tk.Frame | None = None
@@ -96,15 +93,15 @@ class ControlPanel(tk.Tk):
         self._register_private_fonts()
         self._font_families = {
             "body": self._resolve_font_family(
-                ("Inter 18pt", "Inter 24pt", "Inter"),
+                ("Inter", "Inter Medium"),
                 ("Segoe UI", "Arial", "TkDefaultFont"),
             ),
             "headline": self._resolve_font_family(
-                ("Inter 24pt SemiBold", "Inter 24pt Medium", "Inter 24pt", "Inter 18pt SemiBold"),
+                ("Inter SemiBold", "Inter Medium", "Inter"),
                 ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
             ),
             "title": self._resolve_font_family(
-                ("Inter 28pt SemiBold", "Inter 28pt Medium", "Inter 28pt", "Inter 24pt SemiBold"),
+                ("Inter SemiBold", "Inter Medium", "Inter"),
                 ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
             ),
             "label": self._resolve_font_family(
@@ -112,7 +109,7 @@ class ControlPanel(tk.Tk):
                 ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
             ),
             "button": self._resolve_font_family(
-                ("Inter 18pt Medium", "Inter 18pt SemiBold", "Inter 18pt", "Inter"),
+                ("Inter Medium", "Inter SemiBold", "Inter"),
                 ("Segoe UI Semibold", "Segoe UI", "Arial", "TkDefaultFont"),
             ),
             "mono": self._resolve_font_family(
@@ -169,49 +166,8 @@ class ControlPanel(tk.Tk):
                 return fallback_match
         return fallback_families[0]
 
-    def _load_icon_image(self, icon_name: str, *, size: int = 16) -> tk.PhotoImage | None:
-        cache_key = f"{icon_name}:{size}"
-        if cache_key in self._icon_cache:
-            return self._icon_cache[cache_key]
-
-        icon_path = APP_ICONS_DIR / f"{icon_name}.svg"
-        image: tk.PhotoImage | None = None
-        if icon_path.is_file():
-            try:
-                image = tk.PhotoImage(file=str(icon_path))
-            except tk.TclError:
-                try:
-                    import cairosvg  # type: ignore
-                except Exception:
-                    image = None
-                else:
-                    try:
-                        png_bytes = cairosvg.svg2png(
-                            url=str(icon_path),
-                            output_width=size,
-                            output_height=size,
-                        )
-                        image = tk.PhotoImage(data=base64.b64encode(png_bytes).decode("ascii"))
-                    except Exception:
-                        image = None
-
-        self._icon_cache[cache_key] = image
-        return image
-
     def _icon_glyph(self, icon_name: str) -> str:
         return ICON_GLYPHS.get(icon_name, "")
-
-    def _decorate_button(self, button: ttk.Button, text: str, icon_name: str | None = None) -> None:
-        button.configure(text=text)
-        if icon_name is None:
-            return
-
-        image = self._load_icon_image(icon_name)
-        if image is None:
-            return
-
-        button.configure(image=image, compound="left")
-        button.image = image
 
     def _build_icon_badge(self, parent: tk.Misc, icon_name: str) -> tk.Label:
         glyph = self._icon_glyph(icon_name)
@@ -223,12 +179,6 @@ class ControlPanel(tk.Tk):
                 fg=THEME["muted_alt"],
                 font=(self._font_families["icon"], 12),
             )
-
-        image = self._load_icon_image(icon_name)
-        if image is not None:
-            badge = tk.Label(parent, image=image, bg=THEME["card"])
-            badge.image = image
-            return badge
 
         return tk.Label(
             parent,

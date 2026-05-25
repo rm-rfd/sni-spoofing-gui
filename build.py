@@ -15,9 +15,9 @@ SRC_ROOT = PROJECT_ROOT / "src"
 ASSET_ROOT = SRC_ROOT / "assets"
 ENTRYPOINT = SRC_ROOT / "main.py"
 RUNTIME_FILES = ["config.json"]
-OPTIONAL_RUNTIME_FILES = ["logo.ico", "logo.png"]
+OPTIONAL_RUNTIME_FILES = ["logo.ico"]
 RUNTIME_DIRECTORIES = ["xray"]
-ASSET_DIRECTORIES = ["fonts", "icons"]
+ASSET_DIRECTORIES = ["fonts"]
 APP_ICON_PATH = ASSET_ROOT / "logo.ico"
 
 
