@@ -6,6 +6,7 @@ from src.core.config.app_config import (
     get_active_xray_share_url,
     get_app_dir,
     get_config_port,
+    get_local_proxy_port,
     get_config_string,
     load_config,
     resolve_connect_port,
@@ -88,16 +89,12 @@ def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySetti
 
     xray_settings = XrayLocalProxySettings(
         binary_path=resolve_runtime_path(get_config_string(config, "XRAY_BINARY_PATH", os.path.join("xray", "xray.exe"))),
-        socks_host="127.0.0.1",
-        socks_port=get_config_port(config, "XRAY_SOCKS_PORT", 10808),
-        http_host="127.0.0.1",
-        http_port=get_config_port(config, "XRAY_HTTP_PORT", 10809),
+        mixed_host="127.0.0.1",
+        mixed_port=get_local_proxy_port(config),
         log_level=get_config_string(config, "XRAY_LOG_LEVEL", "warning"),
     )
-    if xray_settings.socks_port == xray_settings.http_port:
-        raise ValueError("XRAY_SOCKS_PORT and XRAY_HTTP_PORT must be different")
-    if LISTEN_PORT in {xray_settings.socks_port, xray_settings.http_port}:
-        raise ValueError("LISTEN_PORT must be different from XRAY_SOCKS_PORT and XRAY_HTTP_PORT")
+    if LISTEN_PORT == xray_settings.mixed_port:
+        raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
 
     share_profile = parse_xray_share_url(share_url)
     relay_host = get_xray_relay_host()

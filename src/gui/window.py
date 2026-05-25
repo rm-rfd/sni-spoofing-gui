@@ -9,7 +9,16 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
-from src.core.config.app_config import XRAY_LOG_LEVELS, get_app_dir, load_config
+from src.core.config.app_config import (
+    CONNECTION_MODES,
+    XRAY_LOG_LEVELS,
+    get_app_dir,
+    get_connection_mode,
+    get_local_proxy_port,
+    load_config,
+    normalize_connection_mode,
+    save_config,
+)
 import src.gui.editor as editor_helpers
 import src.gui.logs as log_helpers
 import src.gui.profiles as profile_helpers
@@ -69,8 +78,8 @@ class ControlPanel(tk.Tk):
 
         self.connect_ip_var = tk.StringVar()
         self.fake_sni_var = tk.StringVar()
-        self.socks_port_var = tk.StringVar()
-        self.http_port_var = tk.StringVar()
+        self.connection_mode_var = tk.StringVar(value=CONNECTION_MODES[0])
+        self.local_proxy_port_var = tk.StringVar()
         self.log_level_var = tk.StringVar(value="warning")
         self.profile_status_var = tk.StringVar(value="No active Xray profile selected.")
         self.status_var = tk.StringVar(value="Stopped")
@@ -383,11 +392,11 @@ class ControlPanel(tk.Tk):
         )
         shell.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         section = shell.content
-        for column in range(4):
+        for column in range(3):
             section.columnconfigure(column, weight=1)
 
         header = ttk.Frame(section, style="Section.TFrame")
-        header.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
         header.columnconfigure(0, weight=1)
 
         ttk.Label(header, text="Editable Settings", style="SectionTitle.TLabel").grid(
@@ -396,8 +405,27 @@ class ControlPanel(tk.Tk):
             sticky="w",
         )
 
+        connection_mode_wrap = ttk.Frame(header, style="Section.TFrame")
+        connection_mode_wrap.grid(row=0, column=1, sticky="e", padx=(0, 12))
+        ttk.Label(connection_mode_wrap, text="CONNECTION MODE", style="CardLabel.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="e",
+            padx=(0, 8),
+        )
+        self.connection_mode_combo = ttk.Combobox(
+            connection_mode_wrap,
+            state="readonly",
+            textvariable=self.connection_mode_var,
+            values=CONNECTION_MODES,
+            style="Card.TCombobox",
+            width=22,
+        )
+        self.connection_mode_combo.grid(row=0, column=1, sticky="e")
+        self.connection_mode_combo.bind("<<ComboboxSelected>>", self._on_connection_mode_changed, add="+")
+
         log_level_wrap = ttk.Frame(header, style="Section.TFrame")
-        log_level_wrap.grid(row=0, column=1, sticky="e")
+        log_level_wrap.grid(row=0, column=2, sticky="e")
         ttk.Label(log_level_wrap, text="XRAY LOG LEVEL", style="CardLabel.TLabel").grid(
             row=0,
             column=0,
@@ -414,10 +442,18 @@ class ControlPanel(tk.Tk):
         )
         self.log_level_combo.grid(row=0, column=1, sticky="e")
 
-        self._build_settings_card(section, 1, 0, "CONNECT IP", self.connect_ip_var, "lan")
-        self._build_settings_card(section, 1, 1, "FAKE SNI", self.fake_sni_var, "public")
-        self._build_settings_card(section, 1, 2, "SOCKS PORT", self.socks_port_var, "usb")
-        self._build_settings_card(section, 1, 3, "HTTP PORT", self.http_port_var, "usb")
+        self._build_settings_card(section, 1, 0, "CONNECT IP", self.connect_ip_var, "lan", total_columns=3)
+        self._build_settings_card(section, 1, 1, "FAKE SNI", self.fake_sni_var, "public", total_columns=3)
+        local_proxy_entry = self._build_settings_card(
+            section,
+            1,
+            2,
+            "MIXED PROXY PORT",
+            self.local_proxy_port_var,
+            "usb",
+            total_columns=3,
+        )
+        local_proxy_entry.bind("<FocusOut>", self._on_proxy_mode_settings_changed, add="+")
         shell.refresh()
 
     def _build_settings_card(
@@ -428,7 +464,9 @@ class ControlPanel(tk.Tk):
         label_text: str,
         variable: tk.StringVar,
         icon_name: str,
-    ) -> None:
+        *,
+        total_columns: int = 4,
+    ) -> ttk.Entry:
         card = RoundedPanel(
             parent,
             fill=THEME["card"],
@@ -437,7 +475,7 @@ class ControlPanel(tk.Tk):
             padding=(12, 10, 12, 10),
         )
         left_pad = 0 if column == 0 else 8
-        right_pad = 0 if column == 3 else 8
+        right_pad = 0 if column == (total_columns - 1) else 8
         card.grid(row=row, column=column, sticky="ew", padx=(left_pad, right_pad), pady=4)
         card.content.columnconfigure(0, weight=1)
 
@@ -448,8 +486,10 @@ class ControlPanel(tk.Tk):
         ttk.Label(top, text=label_text, style="CardLabel.TLabel").grid(row=0, column=0, sticky="w")
         badge = self._build_icon_badge(top, icon_name)
         badge.grid(row=0, column=1, sticky="e")
-        ttk.Entry(card.content, textvariable=variable, style="Card.TEntry").grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        entry = ttk.Entry(card.content, textvariable=variable, style="Card.TEntry")
+        entry.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         card.refresh()
+        return entry
 
     def _build_profiles_section(self, parent: ttk.Frame) -> None:
         shell = RoundedPanel(
@@ -938,6 +978,7 @@ class ControlPanel(tk.Tk):
         selected_profile_ids: tuple[str, ...] = (),
         log_message: str | None = None,
     ) -> None:
+        self._persist_proxy_mode_settings_to_disk(show_errors=False)
         profile_helpers.persist_profile_state(
             self,
             profiles,
@@ -1043,13 +1084,40 @@ class ControlPanel(tk.Tk):
 
         self.connect_ip_var.set(str(config.get("CONNECT_IP", "")))
         self.fake_sni_var.set(str(config.get("FAKE_SNI", "")))
-        self.socks_port_var.set(str(config.get("XRAY_SOCKS_PORT", "")))
-        self.http_port_var.set(str(config.get("XRAY_HTTP_PORT", "")))
+        self.connection_mode_var.set(get_connection_mode(config))
+        self.local_proxy_port_var.set(str(get_local_proxy_port(config)))
         self.log_level_var.set(str(config.get("XRAY_LOG_LEVEL", "warning")).strip().lower())
         self._load_profiles_from_config(config)
         self.after_idle(self._refresh_profile_scrollbars)
         if show_log:
             self._append_log("[loaded] config loaded from disk")
+
+    def _persist_proxy_mode_settings_to_disk(self, *, show_errors: bool = False) -> bool:
+        try:
+            config = load_config()
+            config["CONNECTION_MODE"] = normalize_connection_mode(self.connection_mode_var.get())
+            config["LOCAL_PROXY_PORT"] = self._parse_port_value(
+                self.local_proxy_port_var.get(),
+                "LOCAL_PROXY_PORT",
+            )
+            save_config(config)
+        except Exception as exc:
+            if show_errors:
+                messagebox.showerror("Failed To Save Settings", str(exc), parent=self)
+            return False
+        return True
+
+    def _on_proxy_mode_settings_changed(
+        self,
+        _event: tk.Event[tk.Misc] | None = None,
+    ) -> None:
+        self._persist_proxy_mode_settings_to_disk(show_errors=False)
+
+    def _on_connection_mode_changed(
+        self,
+        _event: tk.Event[tk.Misc] | None = None,
+    ) -> None:
+        relay_helpers.handle_connection_mode_changed(self)
 
     def _parse_port_value(self, raw_value: str, field_name: str) -> int:
         return relay_helpers.parse_port_value(raw_value, field_name)
@@ -1155,6 +1223,7 @@ class ControlPanel(tk.Tk):
             except Exception:
                 pass
             self.process = None
+        self._persist_proxy_mode_settings_to_disk(show_errors=False)
         self._cleanup_runtime_config()
         self.destroy()
 

@@ -16,6 +16,7 @@ from src.core.config.app_config import (
     get_active_xray_share_url,
     get_app_dir,
     get_config_port,
+    get_local_proxy_port,
     get_config_string,
     save_config,
 )
@@ -36,8 +37,7 @@ class DelayTestError(RuntimeError):
 class DelayTestResult:
     latency_ms: float
     relay_port: int
-    socks_port: int
-    http_port: int
+    proxy_port: int
     target_host: str = DELAY_TEST_TARGET_HOST
     target_port: int = DELAY_TEST_TARGET_PORT
 
@@ -115,14 +115,14 @@ def _pump_process_output(
     process.stdout.close()
 
 
-def _wait_for_http_proxy_ready(
+def _wait_for_proxy_ready(
     process: subprocess.Popen[str],
     output_queue: queue.Queue[str],
-    http_host: str,
-    http_port: int,
+    proxy_host: str,
+    proxy_port: int,
     timeout_seconds: float,
 ) -> None:
-    ready_token = f"HTTP proxy: {http_host}:{http_port}"
+    ready_token = f"Mixed proxy: {proxy_host}:{proxy_port}"
     observed_lines: list[str] = []
     deadline = time.monotonic() + timeout_seconds
 
@@ -151,9 +151,9 @@ def _wait_for_http_proxy_ready(
     details = _tail_output(observed_lines)
     if details:
         raise DelayTestError(
-            f"Timed out while waiting for the temporary HTTP proxy to start.\n{details}"
+            f"Timed out while waiting for the temporary mixed proxy to start.\n{details}"
         )
-    raise DelayTestError("Timed out while waiting for the temporary HTTP proxy to start.")
+    raise DelayTestError("Timed out while waiting for the temporary mixed proxy to start.")
 
 
 def _measure_https_request_delay(
@@ -193,7 +193,7 @@ def _measure_https_request_delay(
         return (time.perf_counter() - start_time) * 1000.0
     except Exception as exc:
         raise DelayTestError(
-            f"Delay test could not fetch https://{request_host}{request_path} through the temporary HTTP proxy: {exc}"
+            f"Delay test could not fetch https://{request_host}{request_path} through the temporary mixed proxy: {exc}"
         ) from exc
     finally:
         connection.close()
@@ -245,24 +245,22 @@ def measure_delay_with_temporary_runtime(
     excluded_ports = {
         get_config_port(config, "LISTEN_PORT", 40443),
         get_config_port(config, "CONNECT_PORT", 443),
+        get_local_proxy_port(config),
         get_config_port(config, "XRAY_SOCKS_PORT", 10808),
         get_config_port(config, "XRAY_HTTP_PORT", 10809),
     }
     relay_port = _allocate_free_tcp_port(listen_host, excluded_ports)
-    socks_port = _allocate_free_tcp_port("127.0.0.1", excluded_ports)
-    http_port = _allocate_free_tcp_port("127.0.0.1", excluded_ports)
+    proxy_port = _allocate_free_tcp_port("127.0.0.1", excluded_ports)
 
     temp_config = dict(config)
     temp_config["LISTEN_PORT"] = relay_port
-    temp_config["XRAY_SOCKS_PORT"] = socks_port
-    temp_config["XRAY_HTTP_PORT"] = http_port
+    temp_config["LOCAL_PROXY_PORT"] = proxy_port
 
     temp_config_path = _write_temp_config(temp_config)
     process: subprocess.Popen[str] | None = None
 
     _emit_log(log_callback, f"[delay] Launching temporary relay on {listen_host}:{relay_port}")
-    _emit_log(log_callback, f"[delay] Temporary Xray SOCKS5 proxy: 127.0.0.1:{socks_port}")
-    _emit_log(log_callback, f"[delay] Temporary Xray HTTP proxy: 127.0.0.1:{http_port}")
+    _emit_log(log_callback, f"[delay] Temporary Xray mixed proxy: 127.0.0.1:{proxy_port}")
 
     try:
         command = [str(part) for part in headless_command]
@@ -287,10 +285,10 @@ def measure_delay_with_temporary_runtime(
             daemon=True,
         ).start()
 
-        _wait_for_http_proxy_ready(process, output_queue, "127.0.0.1", http_port, startup_timeout)
+        _wait_for_proxy_ready(process, output_queue, "127.0.0.1", proxy_port, startup_timeout)
         latency_ms = _measure_https_request_delay(
             "127.0.0.1",
-            http_port,
+            proxy_port,
             target_host,
             target_port,
             DELAY_TEST_TARGET_HTTP_HOST,
@@ -300,8 +298,7 @@ def measure_delay_with_temporary_runtime(
         return DelayTestResult(
             latency_ms=latency_ms,
             relay_port=relay_port,
-            socks_port=socks_port,
-            http_port=http_port,
+            proxy_port=proxy_port,
             target_host=target_host,
             target_port=target_port,
         )

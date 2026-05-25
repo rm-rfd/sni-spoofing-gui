@@ -119,7 +119,7 @@ def handle_delay_result(
     append_log(
         panel,
         f"[delay] {profile_label}: {result.target_host}:{result.target_port} reachable in {result.latency_ms:.0f} ms "
-        f"via relay={result.relay_port}, socks={result.socks_port}, http={result.http_port}",
+        f"via relay={result.relay_port}, mixed={result.proxy_port}",
         "delay_success",
     )
     if index == total:

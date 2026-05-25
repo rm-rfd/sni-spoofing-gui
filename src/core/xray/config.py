@@ -24,10 +24,8 @@ class XrayShareProfile:
 @dataclass(frozen=True)
 class XrayLocalProxySettings:
     binary_path: str
-    socks_host: str
-    socks_port: int
-    http_host: str
-    http_port: int
+    mixed_host: str
+    mixed_port: int
     log_level: str
 
 
@@ -230,19 +228,11 @@ def build_xray_config(
         "log": {"loglevel": proxy_settings.log_level},
         "inbounds": [
             {
-                "tag": "socks-in",
-                "listen": proxy_settings.socks_host,
-                "port": proxy_settings.socks_port,
-                "protocol": "socks",
+                "tag": "mixed-in",
+                "listen": proxy_settings.mixed_host,
+                "port": proxy_settings.mixed_port,
+                "protocol": "mixed",
                 "settings": {"auth": "noauth", "udp": False},
-                "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
-            },
-            {
-                "tag": "http-in",
-                "listen": proxy_settings.http_host,
-                "port": proxy_settings.http_port,
-                "protocol": "http",
-                "settings": {},
                 "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
             },
         ],
@@ -251,7 +241,7 @@ def build_xray_config(
             "rules": [
                 {
                     "type": "field",
-                    "inboundTag": ["socks-in", "http-in"],
+                    "inboundTag": ["mixed-in"],
                     "outboundTag": "proxy",
                 }
             ],

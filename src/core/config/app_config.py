@@ -11,13 +11,20 @@ from src.core.xray.config import parse_xray_share_url
 
 
 XRAY_LOG_LEVELS = ("debug", "info", "warning", "error", "none")
+CONNECTION_MODES = (
+    "clear system proxy",
+    "set system proxy",
+    "tunnel whole system",
+)
+DEFAULT_CONNECTION_MODE = CONNECTION_MODES[0]
+DEFAULT_LOCAL_PROXY_PORT = 10809
 XRAY_PROFILES_KEY = "XRAY_PROFILES"
 XRAY_ACTIVE_PROFILE_ID_KEY = "XRAY_ACTIVE_PROFILE_ID"
 GUI_EDITABLE_FIELDS = (
     "CONNECT_IP",
     "FAKE_SNI",
-    "XRAY_SOCKS_PORT",
-    "XRAY_HTTP_PORT",
+    "CONNECTION_MODE",
+    "LOCAL_PROXY_PORT",
     "XRAY_LOG_LEVEL",
 )
 
@@ -185,6 +192,8 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     active_profile = _resolve_active_xray_profile(normalized_config, profiles)
     normalized_config[XRAY_PROFILES_KEY] = profiles
     normalized_config[XRAY_ACTIVE_PROFILE_ID_KEY] = "" if active_profile is None else active_profile["id"]
+    normalized_config["CONNECTION_MODE"] = get_connection_mode(normalized_config)
+    normalized_config["LOCAL_PROXY_PORT"] = get_local_proxy_port(normalized_config)
     return normalized_config
 
 
@@ -265,6 +274,43 @@ def get_config_bool(config: dict[str, Any], name: str, default: bool = False) ->
         if normalized in {"0", "false", "no", "off", ""}:
             return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def normalize_connection_mode(raw_value: str) -> str:
+    normalized = raw_value.strip().lower()
+    if normalized not in CONNECTION_MODES:
+        raise ValueError(
+            f"CONNECTION_MODE must be one of: {', '.join(CONNECTION_MODES)}"
+        )
+    return normalized
+
+
+def get_connection_mode(
+    config: dict[str, Any],
+    default: str = DEFAULT_CONNECTION_MODE,
+) -> str:
+    raw_value = get_config_string(config, "CONNECTION_MODE", default)
+    return normalize_connection_mode(raw_value)
+
+
+def get_local_proxy_port(
+    config: dict[str, Any],
+    default: int = DEFAULT_LOCAL_PROXY_PORT,
+) -> int:
+    raw_local_proxy_port = config.get("LOCAL_PROXY_PORT")
+    if raw_local_proxy_port is not None:
+        if not isinstance(raw_local_proxy_port, str) or raw_local_proxy_port.strip():
+            return get_config_port(config, "LOCAL_PROXY_PORT", default)
+
+    for fallback_name in ("XRAY_HTTP_PORT", "XRAY_SOCKS_PORT"):
+        raw_fallback_value = config.get(fallback_name)
+        if raw_fallback_value is None:
+            continue
+        if isinstance(raw_fallback_value, str) and not raw_fallback_value.strip():
+            continue
+        return get_config_port(config, fallback_name, default)
+
+    return default
 
 
 def normalize_xray_log_level(raw_value: str) -> str:

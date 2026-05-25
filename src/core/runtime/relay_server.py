@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import atexit
 import asyncio
 import os
 import socket
 import sys
 import traceback
-import threading
 
+from src.core.runtime.runtime_controller import RelayRuntimeController
 from src.utils.packet_templates import ClientHelloMaker
 from src.core.runtime import runtime_state
 
@@ -154,26 +153,12 @@ def log_line(message: str = "") -> None:
 
 
 def run_headless(config_path: str | None = None) -> int:
-    from src.core.packet_injection.tcp_injector import FakeTcpInjector
-
-    runtime_state.load_runtime_settings(config_path)
-    xray_manager = None
+    controller = RelayRuntimeController(config_path=config_path, log_callback=log_line)
     try:
-        xray_manager, xray_settings = runtime_state.maybe_start_xray_proxy()
-        if xray_manager is not None:
-            atexit.register(runtime_state.stop_xray_proxy, xray_manager)
-
-        w_filter = (
-            "tcp and "
-            + "("
-            + "(ip.SrcAddr == " + runtime_state.INTERFACE_IPV4 + " and ip.DstAddr == " + runtime_state.CONNECT_IP + ")"
-            + " or "
-            + "(ip.SrcAddr == " + runtime_state.CONNECT_IP + " and ip.DstAddr == " + runtime_state.INTERFACE_IPV4 + ")"
-            + ")"
-        )
-        fake_tcp_injector = FakeTcpInjector(w_filter, runtime_state.fake_injective_connections)
-        threading.Thread(target=fake_tcp_injector.run, args=(), daemon=True).start()
+        xray_settings = controller.start()
+        controller.start_packet_injector()
         log_line("SNI-Spoofing Relay started.")
+        log_line(f"Connection mode: {controller.connection_mode}")
         log_line(
             f"Listening on {runtime_state.LISTEN_HOST}:{runtime_state.LISTEN_PORT}, forwarding to "
             f"{runtime_state.CONNECT_IP}:{runtime_state.CONNECT_PORT} with fake SNI="
@@ -181,11 +166,10 @@ def run_headless(config_path: str | None = None) -> int:
         )
         log_line()
         if xray_settings is not None:
-            log_line(f"Bundled Xray started. SOCKS5 proxy: {xray_settings.socks_host}:{xray_settings.socks_port}")
-            log_line(f"Bundled Xray started. HTTP proxy: {xray_settings.http_host}:{xray_settings.http_port}")
+            log_line(f"Bundled Xray started. Mixed proxy: {xray_settings.mixed_host}:{xray_settings.mixed_port}")
         asyncio.run(main())
     finally:
-        runtime_state.stop_xray_proxy(xray_manager)
+        controller.stop()
     return 0
 
 

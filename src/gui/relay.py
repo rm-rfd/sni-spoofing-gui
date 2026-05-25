@@ -10,9 +10,11 @@ from src.core.config.app_config import (
     get_app_dir,
     get_config_port,
     load_config,
+    normalize_connection_mode,
     normalize_xray_log_level,
     replace_xray_profiles,
 )
+from src.core.runtime.runtime_controller import sync_connection_mode_change
 from src.services.delay_test import measure_delay_with_temporary_runtime
 from src.services import relay_runtime
 
@@ -20,6 +22,7 @@ __all__ = [
     "prepare_profiles_for_delay_test",
     "build_delay_test_jobs",
     "parse_port_value",
+    "handle_connection_mode_changed",
     "build_updated_config",
     "cleanup_runtime_config",
     "write_runtime_config",
@@ -73,6 +76,25 @@ def parse_port_value(raw_value: str, field_name: str) -> int:
     return port
 
 
+def handle_connection_mode_changed(panel: Any) -> None:
+    if not panel._persist_proxy_mode_settings_to_disk(show_errors=True):
+        return
+
+    try:
+        connection_mode = normalize_connection_mode(panel.connection_mode_var.get())
+        local_proxy_port = parse_port_value(panel.local_proxy_port_var.get(), "LOCAL_PROXY_PORT")
+        runtime_process = panel.process if panel._is_process_running() else None
+        sync_connection_mode_change(
+            connection_mode,
+            local_proxy_port,
+            runtime_is_running=runtime_process is not None,
+            runtime_pid=None if runtime_process is None else runtime_process.pid,
+            log_callback=panel._append_log,
+        )
+    except Exception as exc:
+        messagebox.showerror("Failed To Apply Mode", str(exc), parent=panel)
+
+
 def build_updated_config(
     panel: Any,
     *,
@@ -83,8 +105,8 @@ def build_updated_config(
 
     connect_ip = panel.connect_ip_var.get().strip()
     fake_sni = panel.fake_sni_var.get().strip()
-    socks_port = parse_port_value(panel.socks_port_var.get(), "XRAY_SOCKS_PORT")
-    http_port = parse_port_value(panel.http_port_var.get(), "XRAY_HTTP_PORT")
+    connection_mode = normalize_connection_mode(panel.connection_mode_var.get())
+    local_proxy_port = parse_port_value(panel.local_proxy_port_var.get(), "LOCAL_PROXY_PORT")
     log_level = normalize_xray_log_level(panel.log_level_var.get())
     listen_port = get_config_port(config, "LISTEN_PORT", 40443)
     profiles = panel._get_profiles_in_display_order()
@@ -94,10 +116,10 @@ def build_updated_config(
         raise ValueError("CONNECT_IP must not be empty")
     if not fake_sni:
         raise ValueError("FAKE_SNI must not be empty")
-    if socks_port == http_port:
-        raise ValueError("XRAY_SOCKS_PORT and XRAY_HTTP_PORT must be different")
-    if listen_port in {socks_port, http_port}:
-        raise ValueError("LISTEN_PORT must be different from XRAY_SOCKS_PORT and XRAY_HTTP_PORT")
+    if connection_mode == "tunnel whole system":
+        raise ValueError("Tunnel whole system mode is not available yet.")
+    if listen_port == local_proxy_port:
+        raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
     if require_active_profile:
         if not profiles:
             raise ValueError("Add at least one Xray profile before continuing.")
@@ -111,8 +133,8 @@ def build_updated_config(
     )
     updated_config["CONNECT_IP"] = connect_ip
     updated_config["FAKE_SNI"] = fake_sni
-    updated_config["XRAY_SOCKS_PORT"] = socks_port
-    updated_config["XRAY_HTTP_PORT"] = http_port
+    updated_config["CONNECTION_MODE"] = connection_mode
+    updated_config["LOCAL_PROXY_PORT"] = local_proxy_port
     updated_config["XRAY_LOG_LEVEL"] = log_level
     return updated_config
 
