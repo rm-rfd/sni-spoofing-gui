@@ -23,7 +23,7 @@ def cli_main() -> int:
     if args.headless:
         return run_headless(args.config)
 
-    from gui import launch_gui
+    from src.gui.window import launch_gui
 
     launch_gui()
     return 0

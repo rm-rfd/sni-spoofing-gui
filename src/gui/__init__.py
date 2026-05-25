@@ -1,16 +1,6 @@
-"""GUI package surface during the src migration."""
+"""GUI package exports."""
 
-from importlib import import_module
+from src.gui.window import ControlPanel, launch_gui
 
 __all__ = ["ControlPanel", "launch_gui"]
-
-
-def __getattr__(name: str):
-	if name in __all__:
-		return getattr(import_module("src.gui.window"), name)
-	raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-def __dir__() -> list[str]:
-	return sorted(__all__)
 

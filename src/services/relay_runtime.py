@@ -37,7 +37,7 @@ def write_runtime_config(config: dict[str, object]) -> Path:
 def build_headless_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, "--headless"]
-    return [sys.executable, "-u", str(Path(get_app_dir()) / "main.py"), "--headless"]
+    return [sys.executable, "-u", "-m", "src", "--headless"]
 
 
 def start_relay_runtime(config: dict[str, object]) -> StartedRelayRuntime:

@@ -185,7 +185,7 @@ def build_bundle(dist_dir: Path, build_dir: Path, *, force_connect_port: bool, d
         "--onefile",
         "--windowed",
         "--hidden-import",
-        "gui",
+        "src.gui.window",
         "--icon",
         str(APP_ICON_PATH),
         "--name",

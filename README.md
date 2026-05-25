@@ -40,8 +40,6 @@ The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profile
 - `src/utils/network_tools.py` and `src/utils/packet_templates.py`: low-level network and TLS packet helpers.
 - `src/assets/`: packaged fonts, icons, and app logos.
 
-Root-level files such as `main.py`, `gui.py`, `app_config.py`, and `utils/*` remain as temporary compatibility shims during the refactor.
-
 ## Configuration
 
 Runtime settings live in `config.json`. The most important fields are `LISTEN_HOST`, `LISTEN_PORT`, `CONNECT_IP`, `CONNECT_PORT`, `FORCE_CONNECT_PORT`, `FAKE_SNI`, `XRAY_PROFILES`, `XRAY_ACTIVE_PROFILE_ID`, `XRAY_BINARY_PATH`, `XRAY_SOCKS_PORT`, `XRAY_HTTP_PORT`, `XRAY_LOG_LEVEL`, and `XRAY_RELAY_HOST`.
@@ -73,7 +71,7 @@ pip install -r requirements.txt
 python -m src
 ```
 
-This opens the GUI by default. Use `python -m src --headless` for console-only relay mode, and add `--config path\to\config.json` to point at a different config file. The root `main.py` shim still works during the migration, but `python -m src` is now the canonical entrypoint.
+This opens the GUI by default. Use `python -m src --headless` for console-only relay mode, and add `--config path\to\config.json` to point at a different config file.
 
 When Xray is active, the app exposes local proxies on `127.0.0.1:XRAY_SOCKS_PORT` and `127.0.0.1:XRAY_HTTP_PORT`.
 
