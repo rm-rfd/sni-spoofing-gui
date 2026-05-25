@@ -11,11 +11,14 @@ import zipfile
 
 APP_NAME = "RM SNI Spoofer"
 PROJECT_ROOT = Path(__file__).resolve().parent
-ENTRYPOINT = PROJECT_ROOT / "main.py"
+SRC_ROOT = PROJECT_ROOT / "src"
+ASSET_ROOT = SRC_ROOT / "assets"
+ENTRYPOINT = SRC_ROOT / "main.py"
 RUNTIME_FILES = ["config.json"]
-OPTIONAL_RUNTIME_FILES = ["logo.ico",]
-RUNTIME_DIRECTORIES = ["xray", "fonts", "icons"]
-APP_ICON_PATH = PROJECT_ROOT / "logo.ico"
+OPTIONAL_RUNTIME_FILES = ["logo.ico", "logo.png"]
+RUNTIME_DIRECTORIES = ["xray"]
+ASSET_DIRECTORIES = ["fonts", "icons"]
+APP_ICON_PATH = ASSET_ROOT / "logo.ico"
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,6 +126,10 @@ def require_paths() -> None:
         directory_path = PROJECT_ROOT / directory_name
         if not directory_path.is_dir():
             raise FileNotFoundError(f"required runtime directory not found: {directory_path}")
+    for directory_name in ASSET_DIRECTORIES:
+        directory_path = ASSET_ROOT / directory_name
+        if not directory_path.is_dir():
+            raise FileNotFoundError(f"required asset directory not found: {directory_path}")
 
 
 def stage_runtime_files(bundle_dir: Path, *, force_connect_port: bool, dry_run: bool) -> None:
@@ -136,11 +143,13 @@ def stage_runtime_files(bundle_dir: Path, *, force_connect_port: bool, dry_run: 
             continue
         copy_file(PROJECT_ROOT / file_name, bundle_dir / file_name, dry_run=dry_run)
     for file_name in OPTIONAL_RUNTIME_FILES:
-        file_path = PROJECT_ROOT / file_name
+        file_path = ASSET_ROOT / file_name
         if file_path.is_file():
             copy_file(file_path, bundle_dir / file_name, dry_run=dry_run)
     for directory_name in RUNTIME_DIRECTORIES:
         copy_directory(PROJECT_ROOT / directory_name, bundle_dir / directory_name, dry_run=dry_run)
+    for directory_name in ASSET_DIRECTORIES:
+        copy_directory(ASSET_ROOT / directory_name, bundle_dir / directory_name, dry_run=dry_run)
 
 
 def create_bundle_zip(bundle_dir: Path, zip_path: Path, *, dry_run: bool) -> None:

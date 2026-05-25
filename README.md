@@ -27,15 +27,20 @@ The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profile
 
 ## Project Layout
 
-- `main.py`: loads config, starts optional Xray, runs the relay, and provides `--headless`.
-- `gui.py`: desktop control panel and profile management.
-- `fake_tcp.py`: handshake tracking and fake packet injection.
-- `injecter.py`: WinDivert wrapper.
-- `monitor_connection.py`: per-connection state.
-- `utils/packet_templates.py`: fake TLS ClientHello builder.
-- `utils/network_tools.py`: finds the local IPv4 route for the upstream host.
-- `utils/delay_test.py`: temporary relay and proxy runtime for delay probes.
-- `utils/xray.py`: parses share links and builds Xray runtime config.
+- `src/main.py`: canonical command-line bootstrap and `--headless` entrypoint.
+- `src/gui/window.py`: desktop control panel shell and layout orchestration.
+- `src/core/config/app_config.py`: config loading, normalization, and asset-path helpers.
+- `src/core/runtime/relay_server.py`: headless relay startup and accept-loop orchestration.
+- `src/core/runtime/runtime_state.py`: shared runtime settings, Xray startup, and relay state.
+- `src/core/packet_injection/injector.py`: WinDivert wrapper.
+- `src/core/packet_injection/connection.py`: per-connection state.
+- `src/core/packet_injection/tcp_injector.py`: handshake tracking and fake packet injection.
+- `src/core/xray/config.py` and `src/core/xray/process.py`: share-link parsing, config generation, and Xray process lifecycle.
+- `src/services/delay_test.py`: temporary relay and proxy runtime for delay probes.
+- `src/utils/network_tools.py` and `src/utils/packet_templates.py`: low-level network and TLS packet helpers.
+- `src/assets/`: packaged fonts, icons, and app logos.
+
+Root-level files such as `main.py`, `gui.py`, `app_config.py`, and `utils/*` remain as temporary compatibility shims during the refactor.
 
 ## Configuration
 
@@ -65,16 +70,16 @@ pip install -r requirements.txt
 ## Run
 
 ```powershell
-python main.py
+python -m src
 ```
 
-This opens the GUI by default. Use `python main.py --headless` for console-only relay mode, and add `--config path\to\config.json` to point at a different config file.
+This opens the GUI by default. Use `python -m src --headless` for console-only relay mode, and add `--config path\to\config.json` to point at a different config file. The root `main.py` shim still works during the migration, but `python -m src` is now the canonical entrypoint.
 
 When Xray is active, the app exposes local proxies on `127.0.0.1:XRAY_SOCKS_PORT` and `127.0.0.1:XRAY_HTTP_PORT`.
 
 ## Build
 
-To create a Windows bundle containing the exe, `config.json`, fonts, icons, and `xray\\xray.exe`:
+To create a Windows bundle containing the exe, `config.json`, assets from `src/assets/`, and `xray\\xray.exe`:
 
 ```powershell
 pip install -r requirements-build.txt
@@ -82,6 +87,8 @@ python build.py
 ```
 
 Use `python build.py --force-connect-port` if you want the bundled config to always use `CONNECT_PORT` instead of the port from an active share link.
+
+`build.py` now packages `src/main.py` as the application entrypoint and stages fonts, icons, and logos from `src/assets/`.
 
 The output bundle is written to `dist\\RM SNI Spoofer\\`.
 
