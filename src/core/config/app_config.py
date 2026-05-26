@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ CONNECTION_MODES = (
 )
 DEFAULT_CONNECTION_MODE = CONNECTION_MODES[0]
 DEFAULT_LOCAL_PROXY_PORT = 10809
+DEFAULT_TUNNEL_DNS_SERVERS = ("1.1.1.1", "1.0.0.1")
 XRAY_PROFILES_KEY = "XRAY_PROFILES"
 XRAY_ACTIVE_PROFILE_ID_KEY = "XRAY_ACTIVE_PROFILE_ID"
 GUI_EDITABLE_FIELDS = (
@@ -194,6 +196,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized_config[XRAY_ACTIVE_PROFILE_ID_KEY] = "" if active_profile is None else active_profile["id"]
     normalized_config["CONNECTION_MODE"] = get_connection_mode(normalized_config)
     normalized_config["LOCAL_PROXY_PORT"] = get_local_proxy_port(normalized_config)
+    normalized_config["TUNNEL_DNS_SERVERS"] = list(get_tunnel_dns_servers(normalized_config))
     return normalized_config
 
 
@@ -311,6 +314,39 @@ def get_local_proxy_port(
         return get_config_port(config, fallback_name, default)
 
     return default
+
+
+def get_tunnel_dns_servers(
+    config: dict[str, Any],
+    default: tuple[str, ...] = DEFAULT_TUNNEL_DNS_SERVERS,
+) -> tuple[str, ...]:
+    raw_value = config.get("TUNNEL_DNS_SERVERS")
+    if raw_value is None:
+        return tuple(default)
+
+    if isinstance(raw_value, str):
+        values = [item.strip() for item in raw_value.split(",") if item.strip()]
+    elif isinstance(raw_value, list):
+        if any(not isinstance(item, str) for item in raw_value):
+            raise ValueError("TUNNEL_DNS_SERVERS must contain only strings")
+        values = [item.strip() for item in raw_value if item.strip()]
+    else:
+        raise ValueError("TUNNEL_DNS_SERVERS must be a comma-separated string or a list of strings")
+
+    if not values:
+        raise ValueError("TUNNEL_DNS_SERVERS must not be empty")
+
+    normalized_values: list[str] = []
+    for value in values:
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError(f"TUNNEL_DNS_SERVERS contains an invalid IP address: {value}") from exc
+        if parsed.version != 4:
+            raise ValueError(f"TUNNEL_DNS_SERVERS currently supports IPv4 only: {value}")
+        normalized_values.append(str(parsed))
+
+    return tuple(normalized_values)
 
 
 def normalize_xray_log_level(raw_value: str) -> str:

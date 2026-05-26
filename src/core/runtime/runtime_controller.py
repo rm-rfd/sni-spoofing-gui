@@ -20,6 +20,11 @@ from src.core.runtime.system_proxy import (
     get_system_proxy_state,
     restore_system_proxy_state,
 )
+from src.core.runtime.tunnel_backend import (
+    TunnelBackend,
+    build_tunnel_backend,
+    cleanup_stale_tunnel_backend_state,
+)
 from src.core.xray.config import XrayLocalProxySettings
 from src.core.xray.process import XrayProcessManager
 
@@ -38,6 +43,7 @@ class RuntimeOwnershipState:
     created_at: str
     owns_system_proxy: bool = False
     original_system_proxy_state: WindowsSystemProxyState | None = None
+    tunnel_backend_state: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,6 +58,7 @@ class RuntimeOwnershipState:
             "original_system_proxy_state": None
             if self.original_system_proxy_state is None
             else self.original_system_proxy_state.to_dict(),
+            "tunnel_backend_state": self.tunnel_backend_state,
         }
 
 
@@ -81,6 +88,7 @@ def load_runtime_ownership_state(
     created_at = payload.get("created_at", "")
     owns_system_proxy = payload.get("owns_system_proxy", False)
     original_system_proxy_payload = payload.get("original_system_proxy_state")
+    tunnel_backend_state = payload.get("tunnel_backend_state")
 
     if not isinstance(pid, int) or pid < 1:
         raise ValueError("runtime ownership state pid must be a positive integer")
@@ -98,6 +106,8 @@ def load_runtime_ownership_state(
         raise ValueError("runtime ownership state created_at must be a string")
     if not isinstance(owns_system_proxy, bool):
         raise ValueError("runtime ownership state owns_system_proxy must be a boolean")
+    if tunnel_backend_state is not None and not isinstance(tunnel_backend_state, dict):
+        raise ValueError("runtime ownership state tunnel_backend_state must be an object")
 
     original_system_proxy_state: WindowsSystemProxyState | None = None
     if original_system_proxy_payload is not None:
@@ -115,6 +125,7 @@ def load_runtime_ownership_state(
         created_at=created_at.strip(),
         owns_system_proxy=owns_system_proxy,
         original_system_proxy_state=original_system_proxy_state,
+        tunnel_backend_state=None if tunnel_backend_state is None else dict(tunnel_backend_state),
     )
 
 
@@ -165,6 +176,9 @@ def repair_stale_runtime_ownership_state(
         if log_callback is not None:
             log_callback("[start] restored previous system proxy from stale runtime state")
 
+    if state.tunnel_backend_state is not None:
+        cleanup_stale_tunnel_backend_state(state.tunnel_backend_state, log_callback=log_callback)
+
     cleanup_runtime_ownership_state(resolved_path)
     if log_callback is not None:
         log_callback(
@@ -185,6 +199,7 @@ class RelayRuntimeController:
         self.ownership_state: RuntimeOwnershipState | None = None
         self.xray_manager: XrayProcessManager | None = None
         self.xray_settings: XrayLocalProxySettings | None = None
+        self.tunnel_backend: TunnelBackend | None = None
         self.packet_injector: object | None = None
 
     @property
@@ -199,7 +214,7 @@ class RelayRuntimeController:
 
         connection_mode = get_connection_mode(runtime_state.config)
         if connection_mode == "tunnel whole system":
-            raise ValueError("Tunnel whole system mode is not available yet.")
+            _ensure_tunnel_mode_prerequisites()
 
         self.ownership_state = RuntimeOwnershipState(
             pid=os.getpid(),
@@ -213,9 +228,12 @@ class RelayRuntimeController:
         write_runtime_ownership_state(self.ownership_state)
         try:
             self.xray_manager, self.xray_settings = runtime_state.build_xray_manager()
-            if self.xray_manager is not None:
-                self.xray_manager.start()
-            self._apply_connection_mode()
+            if connection_mode == "tunnel whole system":
+                self._start_tunnel_backend()
+            else:
+                if self.xray_manager is not None:
+                    self.xray_manager.start()
+                self._apply_connection_mode()
         except Exception:
             self.stop()
             raise
@@ -254,13 +272,46 @@ class RelayRuntimeController:
             cleanup_marker = False
             if self.log_callback is not None:
                 self.log_callback(f"[stop] failed to restore previous system proxy: {exc}")
+        try:
+            self._restore_tunnel_backend_if_owned()
+        except Exception as exc:
+            cleanup_marker = False
+            if self.log_callback is not None:
+                self.log_callback(f"[stop] failed to restore tunnel backend routes: {exc}")
         finally:
-            runtime_state.stop_xray_proxy(self.xray_manager)
+            if self.tunnel_backend is not None:
+                self.tunnel_backend.stop()
+            else:
+                runtime_state.stop_xray_proxy(self.xray_manager)
+            self.tunnel_backend = None
             self.xray_manager = None
             self.xray_settings = None
             self.packet_injector = None
             if cleanup_marker:
                 cleanup_runtime_ownership_state()
+
+    def _start_tunnel_backend(self) -> None:
+        if self.xray_manager is None or self.xray_settings is None:
+            raise ValueError("Tunnel whole system mode requires an active Xray profile")
+
+        self.tunnel_backend = build_tunnel_backend(
+            self.xray_manager,
+            self.xray_settings,
+            log_callback=self.log_callback,
+        )
+        self.tunnel_backend.prepare(runtime_state.config)
+        self._update_ownership_state(tunnel_backend_state=self.tunnel_backend.describe_state())
+        self.tunnel_backend.start()
+        self.tunnel_backend.apply_routes()
+        self.tunnel_backend.apply_dns()
+        health = self.tunnel_backend.check_health()
+        self._update_ownership_state(tunnel_backend_state=self.tunnel_backend.describe_state())
+        if not health.ok:
+            raise RuntimeError(f"Tunnel backend failed health check: {health.detail}")
+        if self.log_callback is not None:
+            self.log_callback(
+                f"[start] tunnel backend healthy on {health.adapter_name or 'xray tunnel'}"
+            )
 
     def _reload_ownership_state_from_disk(self) -> None:
         if self.ownership_state is None:
@@ -338,6 +389,12 @@ class RelayRuntimeController:
         restore_system_proxy_state(self.ownership_state.original_system_proxy_state)
         if self.log_callback is not None:
             self.log_callback("[stop] restored previous system proxy")
+
+    def _restore_tunnel_backend_if_owned(self) -> None:
+        if self.tunnel_backend is None:
+            return
+        self.tunnel_backend.restore_dns()
+        self.tunnel_backend.restore_routes()
 
     def _best_effort_restore_system_proxy(self, state: WindowsSystemProxyState) -> None:
         try:
@@ -506,6 +563,24 @@ def _is_process_running(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _ensure_tunnel_mode_prerequisites() -> None:
+    if _is_running_as_administrator():
+        return
+    raise ValueError(
+        "Tunnel whole system mode requires Administrator rights. "
+        "Restart the app as Administrator."
+    )
+
+
+def _is_running_as_administrator() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 
 
 def _is_process_running_windows(pid: int) -> bool:

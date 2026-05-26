@@ -12,21 +12,21 @@ The app also includes a desktop control panel for managing Xray share links, sta
 
 For each incoming TCP connection, the program listens on `LISTEN_HOST:LISTEN_PORT`, opens an outbound connection to the configured `CONNECT_IP`, watches that connection with WinDivert through `pydivert`, injects the fake TLS handshake, and then relays bytes in both directions without modifying the real payload.
 
-If an active Xray profile is configured, the app starts the bundled `xray.exe` process. Xray exposes one local mixed proxy on `127.0.0.1:LOCAL_PROXY_PORT`, and its outbound traffic is rewired back to the local relay listener.
+If an active Xray profile is configured, the app starts the bundled `xray.exe` process. In the proxy-based modes, Xray exposes one local mixed proxy on `127.0.0.1:LOCAL_PROXY_PORT`, and its outbound traffic is rewired back to the local relay listener. In `tunnel whole system` mode, Xray creates a Wintun-backed TUN adapter and the app takes ownership of the default IPv4 route, a direct exclusion route for `CONNECT_IP`, and the tunnel adapter DNS settings while the relay is running.
 
-The connection mode controls what happens to the Windows system proxy while the relay is running:
+The connection mode controls what the app owns while the relay is running:
 
 - `clear system proxy`: the app clears the Windows system proxy while keeping the local mixed proxy available for manual clients.
 - `set system proxy`: the app points the Windows system proxy at `127.0.0.1:LOCAL_PROXY_PORT` while the relay is running.
-- `tunnel whole system`: reserved for later work and currently unavailable.
+- `tunnel whole system`: the app uses the bundled Xray TUN backend with `wintun.dll`, moves the default IPv4 route onto the Xray adapter, pins `CONNECT_IP` outside the tunnel, applies `TUNNEL_DNS_SERVERS` to the tunnel adapter, and restores those changes on stop or stale-state repair. This mode requires administrator rights and carries UDP traffic through the tunnel backend.
 
-The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profiles` table, lets you mark one row active, and runs delay tests for selected rows. Only the active profile powers the relay.
+The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profiles` table, lets you mark one row active, and runs delay tests for selected rows. Only the active profile powers the relay. Delay tests are available only in the proxy-based modes and are intentionally blocked while `tunnel whole system` is selected.
 
 ## Key Limits
 
 - Windows only.
 - IPv4 only in the current entry point.
-- TCP relay only; no UDP or QUIC.
+- The proxy-based relay path is TCP-only; UDP works in `tunnel whole system` mode through the bundled Xray TUN backend.
 - One fixed upstream destination per run.
 - `wrong_seq` is the only active bypass method.
 - Share-link mode expects port `443` unless `FORCE_CONNECT_PORT` is enabled.
@@ -43,7 +43,9 @@ The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profile
 - `src/gui/widgets.py`: custom panels and buttons.
 - `src/gui/theme.py`: theme tokens, icons, and style setup.
 - `src/core/config/app_config.py`: config loading, normalization, and profile record helpers.
+- `src/core/runtime/runtime_controller.py`: mode-aware runtime ownership, startup, shutdown, and stale-state repair.
 - `src/core/runtime/runtime_state.py`: shared runtime settings, runtime-path resolution, and Xray startup decisions.
+- `src/core/runtime/tunnel_backend.py`: bundled Xray TUN backend, route ownership, DNS ownership, and stale tunnel cleanup.
 - `src/core/runtime/relay_server.py`: headless relay startup and accept-loop orchestration.
 - `src/services/relay_runtime.py`: GUI subprocess launcher for the headless runtime.
 - `src/services/delay_test.py`: temporary relay and proxy runtime for delay probes.
@@ -55,15 +57,17 @@ The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profile
 
 ## Configuration
 
-Runtime settings live in `config.json`. The most important fields are `LISTEN_HOST`, `LISTEN_PORT`, `CONNECT_IP`, `CONNECT_PORT`, `FORCE_CONNECT_PORT`, `FAKE_SNI`, `CONNECTION_MODE`, `LOCAL_PROXY_PORT`, `XRAY_PROFILES`, `XRAY_ACTIVE_PROFILE_ID`, `XRAY_BINARY_PATH`, `XRAY_LOG_LEVEL`, and `XRAY_RELAY_HOST`.
+Runtime settings live in `config.json`. The most important fields are `LISTEN_HOST`, `LISTEN_PORT`, `CONNECT_IP`, `CONNECT_PORT`, `FORCE_CONNECT_PORT`, `FAKE_SNI`, `CONNECTION_MODE`, `LOCAL_PROXY_PORT`, `TUNNEL_DNS_SERVERS`, `XRAY_PROFILES`, `XRAY_ACTIVE_PROFILE_ID`, `XRAY_BINARY_PATH`, `XRAY_LOG_LEVEL`, and `XRAY_RELAY_HOST`.
 
 Older `XRAY_SOCKS_PORT` and `XRAY_HTTP_PORT` fields may still exist in `config.json` for compatibility with older configs, but the current runtime uses `LOCAL_PROXY_PORT` for the active mixed inbound.
+
+`TUNNEL_DNS_SERVERS` is a list of IPv4 DNS servers that the app applies to the Xray tunnel adapter while `tunnel whole system` is active. The current default is Cloudflare IPv4 (`1.1.1.1`, `1.0.0.1`).
 
 `FAKE_SNI` only changes the spoofed value in the injected packet. It does not affect DNS resolution or choose the upstream IP.
 
 The GUI reads these values from disk at startup and builds temporary runtime configs from the current form values when starting the relay or running delay tests. Profile add, edit, remove, and active-row changes are handled through the GUI helpers in `src/gui/profiles.py`.
 
-Connection-mode and mixed-port planning is documented in `implementation-docs/plan-connection-mode.md` and `implementation-docs/plan-connection-mode-todo.md`. The current release uses one mixed local proxy port and supports the two proxy-based connection modes.
+Connection-mode and mixed-port planning is documented in `implementation-docs/plan-connection-mode.md` and `implementation-docs/plan-connection-mode-todo.md`. The current release uses one mixed local proxy port for the proxy-based modes and supports `tunnel whole system` through the bundled Xray TUN backend for TCP-oriented traffic.
 
 ## Requirements
 
@@ -72,7 +76,8 @@ Connection-mode and mixed-port planning is documented in `implementation-docs/pl
 - `pydivert`
 - WinDivert support available to `pydivert`
 - `xray\\xray.exe` when using the Xray/profile flow
-- Administrator privileges are usually required for packet capture and injection
+- `xray\\wintun.dll` beside `xray\\xray.exe` when using `tunnel whole system`
+- Administrator privileges are usually required for packet capture and injection, and are required for `tunnel whole system`
 
 Install dependencies:
 
@@ -90,13 +95,17 @@ python -m src
 
 This opens the GUI by default. Use `python -m src --headless` for console-only relay mode, and add `--config path\to\config.json` to point at a different config file.
 
-When Xray is active, the app exposes a local mixed proxy on `127.0.0.1:LOCAL_PROXY_PORT`.
+When Xray is active in the proxy-based modes, the app exposes a local mixed proxy on `127.0.0.1:LOCAL_PROXY_PORT`.
 
 In `clear system proxy` mode, Windows proxy settings are cleared while the relay is running. In `set system proxy` mode, Windows proxy settings are temporarily pointed at `127.0.0.1:LOCAL_PROXY_PORT` and restored when the relay stops.
 
+In `tunnel whole system` mode, the app must be started as Administrator. While that mode is running, the app brings up the bundled Xray TUN adapter, installs a direct `/32` route for `CONNECT_IP` through the pre-tunnel gateway, moves the default IPv4 route to the tunnel adapter, applies `TUNNEL_DNS_SERVERS` to the tunnel adapter, and restores those app-owned route and DNS changes when the relay stops or stale tunnel state is repaired.
+
+Delay tests remain limited to the proxy-based modes because they use temporary runtimes and should not take over system routes or DNS.
+
 ## Build
 
-To create a Windows bundle containing the exe, `config.json`, assets from `src/assets/`, and `xray\\xray.exe`:
+To create a Windows bundle containing the exe, `config.json`, assets from `src/assets/`, and the runtime files under `xray\\`:
 
 ```powershell
 pip install -r requirements-build.txt
@@ -105,7 +114,7 @@ python build.py
 
 Use `python build.py --force-connect-port` if you want the bundled config to always use `CONNECT_PORT` instead of the port from an active share link.
 
-`build.py` packages `src/main.py` as the application entry point and stages fonts, icons, and logos from `src/assets/`.
+`build.py` packages `src/main.py` as the application entry point and stages fonts, icons, logos, and the bundled Xray runtime directory.
 
 The output bundle is written to `dist\\RM SNI Spoofer\\`.
 
@@ -116,6 +125,8 @@ The output bundle is written to `dist\\RM SNI Spoofer\\`.
 - If the chosen `CONNECT_IP` does not actually serve the expected site, the later TLS handshake will still fail.
 - Relay start and delay tests require an active Xray profile.
 - The app restores the previous Windows proxy state on normal stop when it changed that state itself.
+- Tunnel mode restores its app-owned routes and tunnel adapter DNS state on normal stop and stale-state repair.
+- UDP works in `tunnel whole system` mode through the bundled Xray TUN backend when an active Xray profile is configured.
 
 ## License
 

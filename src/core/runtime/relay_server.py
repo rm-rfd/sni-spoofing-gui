@@ -166,7 +166,13 @@ def run_headless(config_path: str | None = None) -> int:
         )
         log_line()
         if xray_settings is not None:
-            log_line(f"Bundled Xray started. Mixed proxy: {xray_settings.mixed_host}:{xray_settings.mixed_port}")
+            if xray_settings.uses_tun:
+                log_line("Bundled Xray started. TUN inbound is active.")
+            else:
+                log_line(
+                    f"Bundled Xray started. Mixed proxy: "
+                    f"{xray_settings.mixed_host}:{xray_settings.mixed_port}"
+                )
         asyncio.run(main())
     finally:
         controller.stop()

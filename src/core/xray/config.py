@@ -11,6 +11,10 @@ class XrayConfigError(ValueError):
     pass
 
 
+XRAY_INBOUND_MODE_MIXED = "mixed"
+XRAY_INBOUND_MODE_TUN = "tun"
+
+
 @dataclass(frozen=True)
 class XrayShareProfile:
     protocol: str
@@ -27,6 +31,20 @@ class XrayLocalProxySettings:
     mixed_host: str
     mixed_port: int
     log_level: str
+    inbound_mode: str = XRAY_INBOUND_MODE_MIXED
+    tun_address: str = "198.18.0.1"
+    tun_network: str = "tcp,udp"
+    tun_mtu: int = 1500
+
+    @property
+    def inbound_tag(self) -> str:
+        if self.inbound_mode == XRAY_INBOUND_MODE_TUN:
+            return "tun-in"
+        return "mixed-in"
+
+    @property
+    def uses_tun(self) -> bool:
+        return self.inbound_mode == XRAY_INBOUND_MODE_TUN
 
 
 def _last_query_values(query: str) -> dict[str, str]:
@@ -199,6 +217,33 @@ def _build_proxy_outbound(
     }
 
 
+def _build_inbound(proxy_settings: XrayLocalProxySettings) -> dict[str, Any]:
+    if proxy_settings.inbound_mode == XRAY_INBOUND_MODE_MIXED:
+        return {
+            "tag": proxy_settings.inbound_tag,
+            "listen": proxy_settings.mixed_host,
+            "port": proxy_settings.mixed_port,
+            "protocol": "mixed",
+            "settings": {"auth": "noauth", "udp": False},
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        }
+
+    if proxy_settings.inbound_mode == XRAY_INBOUND_MODE_TUN:
+        return {
+            "tag": proxy_settings.inbound_tag,
+            "protocol": "tun",
+            "port": 0,
+            "settings": {
+                "address": proxy_settings.tun_address,
+                "net": proxy_settings.tun_network,
+                "mtu": proxy_settings.tun_mtu,
+            },
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        }
+
+    raise XrayConfigError(f"unsupported xray inbound mode: {proxy_settings.inbound_mode}")
+
+
 def build_xray_config(
     profile: XrayShareProfile,
     proxy_settings: XrayLocalProxySettings,
@@ -226,22 +271,13 @@ def build_xray_config(
 
     return {
         "log": {"loglevel": proxy_settings.log_level},
-        "inbounds": [
-            {
-                "tag": "mixed-in",
-                "listen": proxy_settings.mixed_host,
-                "port": proxy_settings.mixed_port,
-                "protocol": "mixed",
-                "settings": {"auth": "noauth", "udp": False},
-                "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
-            },
-        ],
+        "inbounds": [_build_inbound(proxy_settings)],
         "routing": {
             "domainStrategy": "AsIs",
             "rules": [
                 {
                     "type": "field",
-                    "inboundTag": ["mixed-in"],
+                    "inboundTag": [proxy_settings.inbound_tag],
                     "outboundTag": "proxy",
                 }
             ],
@@ -255,6 +291,8 @@ def build_xray_config(
 
 __all__ = [
     "XrayConfigError",
+    "XRAY_INBOUND_MODE_MIXED",
+    "XRAY_INBOUND_MODE_TUN",
     "XrayShareProfile",
     "XrayLocalProxySettings",
     "parse_xray_share_url",

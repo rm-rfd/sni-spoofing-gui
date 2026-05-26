@@ -5,6 +5,7 @@ import os
 from src.core.config.app_config import (
     get_active_xray_share_url,
     get_app_dir,
+    get_connection_mode,
     get_config_port,
     get_local_proxy_port,
     get_config_string,
@@ -12,7 +13,13 @@ from src.core.config.app_config import (
     resolve_connect_port,
 )
 from src.utils.network_tools import get_default_interface_ipv4
-from src.core.xray.config import XrayLocalProxySettings, build_xray_config, parse_xray_share_url
+from src.core.xray.config import (
+    XRAY_INBOUND_MODE_MIXED,
+    XRAY_INBOUND_MODE_TUN,
+    XrayLocalProxySettings,
+    build_xray_config,
+    parse_xray_share_url,
+)
 from src.core.xray.process import XrayProcessManager
 
 
@@ -87,13 +94,21 @@ def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySetti
     if not share_url:
         return None, None
 
+    connection_mode = get_connection_mode(config)
+    inbound_mode = (
+        XRAY_INBOUND_MODE_TUN
+        if connection_mode == "tunnel whole system"
+        else XRAY_INBOUND_MODE_MIXED
+    )
+
     xray_settings = XrayLocalProxySettings(
         binary_path=resolve_runtime_path(get_config_string(config, "XRAY_BINARY_PATH", os.path.join("xray", "xray.exe"))),
         mixed_host="127.0.0.1",
         mixed_port=get_local_proxy_port(config),
         log_level=get_config_string(config, "XRAY_LOG_LEVEL", "warning"),
+        inbound_mode=inbound_mode,
     )
-    if LISTEN_PORT == xray_settings.mixed_port:
+    if not xray_settings.uses_tun and LISTEN_PORT == xray_settings.mixed_port:
         raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
 
     share_profile = parse_xray_share_url(share_url)

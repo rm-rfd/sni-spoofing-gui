@@ -52,6 +52,13 @@ def build_delay_test_jobs(
     panel: Any,
     selected_profile_ids: tuple[str, ...],
 ) -> list[tuple[str, str, dict[str, object]]]:
+    connection_mode = normalize_connection_mode(panel.connection_mode_var.get())
+    if connection_mode == "tunnel whole system":
+        raise ValueError(
+            "Delay test is not available while CONNECTION_MODE is tunnel whole system. "
+            "Switch to a proxy mode before running temporary delay tests."
+        )
+
     delay_jobs: list[tuple[str, str, dict[str, object]]] = []
     for profile_id in selected_profile_ids:
         profile = panel.xray_profiles.get(profile_id)
@@ -116,8 +123,6 @@ def build_updated_config(
         raise ValueError("CONNECT_IP must not be empty")
     if not fake_sni:
         raise ValueError("FAKE_SNI must not be empty")
-    if connection_mode == "tunnel whole system":
-        raise ValueError("Tunnel whole system mode is not available yet.")
     if listen_port == local_proxy_port:
         raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
     if require_active_profile:
@@ -183,12 +188,18 @@ def start_relay(panel: Any) -> None:
 
     panel.process = started_runtime.process
     panel.runtime_config_path = started_runtime.runtime_config_path
-    panel.status_var.set(f"Running (PID {panel.process.pid})")
+    if runtime_config["CONNECTION_MODE"] == "tunnel whole system":
+        panel.status_var.set(f"Running Tunnel (PID {panel.process.pid})")
+    else:
+        panel.status_var.set(f"Running (PID {panel.process.pid})")
     panel._sync_button_state()
     panel._append_log("")
     panel._append_log(f"[start] {subprocess.list2cmdline(started_runtime.command)}")
     panel._append_log(f"[start] runtime config: {started_runtime.runtime_config_path}")
     panel._append_log(f"[start] active profile: {panel._profile_label(active_profile)}")
+    panel._append_log(f"[start] connection mode: {runtime_config['CONNECTION_MODE']}")
+    if runtime_config["CONNECTION_MODE"] == "tunnel whole system":
+        panel._append_log("[start] tunnel mode will take ownership of routes and DNS while the relay is running")
     panel._append_log(f"[pid] {panel.process.pid}")
 
     threading.Thread(target=panel._read_process_output, args=(panel.process,), daemon=True).start()

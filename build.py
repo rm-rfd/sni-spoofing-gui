@@ -17,6 +17,7 @@ ENTRYPOINT = SRC_ROOT / "main.py"
 RUNTIME_FILES = ["config.json"]
 OPTIONAL_RUNTIME_FILES = ["logo.ico"]
 RUNTIME_DIRECTORIES = ["xray"]
+OPTIONAL_RUNTIME_DIRECTORIES = ["tunnel"]
 ASSET_DIRECTORIES = ["fonts"]
 APP_ICON_PATH = ASSET_ROOT / "logo.ico"
 
@@ -148,6 +149,10 @@ def stage_runtime_files(bundle_dir: Path, *, force_connect_port: bool, dry_run: 
             copy_file(file_path, bundle_dir / file_name, dry_run=dry_run)
     for directory_name in RUNTIME_DIRECTORIES:
         copy_directory(PROJECT_ROOT / directory_name, bundle_dir / directory_name, dry_run=dry_run)
+    for directory_name in OPTIONAL_RUNTIME_DIRECTORIES:
+        directory_path = PROJECT_ROOT / directory_name
+        if directory_path.is_dir():
+            copy_directory(directory_path, bundle_dir / directory_name, dry_run=dry_run)
     for directory_name in ASSET_DIRECTORIES:
         copy_directory(ASSET_ROOT / directory_name, bundle_dir / directory_name, dry_run=dry_run)
 
