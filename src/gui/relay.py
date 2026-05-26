@@ -11,6 +11,7 @@ from src.core.config.app_config import (
     get_config_port,
     load_config,
     normalize_connection_mode,
+    save_delay_result,
     normalize_xray_log_level,
     replace_xray_profiles,
 )
@@ -265,8 +266,17 @@ def run_delay_tests(
                     log_callback=lambda message, label=profile_label: panel._queue_profile_delay_log(label, message),
                 )
             except Exception as exc:
+                try:
+                    save_delay_result(profile_id, "", "Failed", "error")
+                except Exception:
+                    pass
                 panel.log_queue.put(("delay-error", profile_id, profile_label, str(exc), index, total_jobs))
             else:
+                delay_text = f"{result.latency_ms:.0f} ms"
+                try:
+                    save_delay_result(profile_id, delay_text, "OK", "success")
+                except Exception:
+                    pass
                 panel.log_queue.put(("delay-result", profile_id, profile_label, result, index, total_jobs))
     finally:
         panel.log_queue.put(("delay-finished", total_jobs))

@@ -16,6 +16,7 @@ from src.core.config.app_config import (
     get_connection_mode,
     get_local_proxy_port,
     load_config,
+    load_delay_results,
     normalize_connection_mode,
     save_config,
 )
@@ -1087,6 +1088,17 @@ class ControlPanel(tk.Tk):
         self.connection_mode_var.set(get_connection_mode(config))
         self.local_proxy_port_var.set(str(get_local_proxy_port(config)))
         self.log_level_var.set(str(config.get("XRAY_LOG_LEVEL", "warning")).strip().lower())
+
+        # Load delay test results BEFORE loading profiles so they display correctly
+        try:
+            delay_results = load_delay_results()
+            for profile_id, result in delay_results.items():
+                self.profile_delay_values[profile_id] = result.get("delay_value", "")
+                self.profile_delay_statuses[profile_id] = result.get("delay_status", "")
+                self.profile_delay_states[profile_id] = result.get("delay_state", "")
+        except Exception:
+            pass
+
         self._load_profiles_from_config(config)
         self.after_idle(self._refresh_profile_scrollbars)
         if show_log:

@@ -124,6 +124,7 @@ The output bundle is written to `dist\\RM SNI Spoofer\\`.
 - Packet injection failures or unexpected packets close the connection.
 - If the chosen `CONNECT_IP` does not actually serve the expected site, the later TLS handshake will still fail.
 - Relay start and delay tests require an active Xray profile.
+- Delay test results are persisted in `config.json` and restored the next time the app opens.
 - The app restores the previous Windows proxy state on normal stop when it changed that state itself.
 - Tunnel mode restores its app-owned routes and tunnel adapter DNS state on normal stop and stale-state repair.
 - UDP works in `tunnel whole system` mode through the bundled Xray TUN backend when an active Xray profile is configured.

@@ -20,6 +20,7 @@ CONNECTION_MODES = (
 DEFAULT_CONNECTION_MODE = CONNECTION_MODES[0]
 DEFAULT_LOCAL_PROXY_PORT = 10809
 DEFAULT_TUNNEL_DNS_SERVERS = ("1.1.1.1", "1.0.0.1")
+DELAY_TEST_RESULTS_KEY = "DELAY_TEST_RESULTS"
 XRAY_PROFILES_KEY = "XRAY_PROFILES"
 XRAY_ACTIVE_PROFILE_ID_KEY = "XRAY_ACTIVE_PROFILE_ID"
 GUI_EDITABLE_FIELDS = (
@@ -141,6 +142,72 @@ def get_active_xray_share_url(config: dict[str, Any]) -> str:
     if active_profile is not None:
         return str(active_profile["url"])
     return ""
+
+
+def load_delay_results(config: dict[str, Any] | None = None) -> dict[str, dict[str, str]]:
+    normalized_config = normalize_config(load_config() if config is None else config)
+    raw_delay_results = normalized_config.get(DELAY_TEST_RESULTS_KEY, {})
+    if raw_delay_results is None:
+        return {}
+    if not isinstance(raw_delay_results, dict):
+        raise ValueError(f"{DELAY_TEST_RESULTS_KEY} must be an object")
+
+    delay_results: dict[str, dict[str, str]] = {}
+    for profile_id, raw_result in raw_delay_results.items():
+        if not isinstance(profile_id, str):
+            raise ValueError(f"{DELAY_TEST_RESULTS_KEY} keys must be strings")
+        if not isinstance(raw_result, dict):
+            raise ValueError(f"{DELAY_TEST_RESULTS_KEY}[{profile_id}] must be an object")
+
+        delay_value = raw_result.get("delay_value", "")
+        delay_status = raw_result.get("delay_status", "")
+        delay_state = raw_result.get("delay_state", "")
+        if not isinstance(delay_value, str):
+            raise ValueError(f"{DELAY_TEST_RESULTS_KEY}[{profile_id}].delay_value must be a string")
+        if not isinstance(delay_status, str):
+            raise ValueError(f"{DELAY_TEST_RESULTS_KEY}[{profile_id}].delay_status must be a string")
+        if not isinstance(delay_state, str):
+            raise ValueError(f"{DELAY_TEST_RESULTS_KEY}[{profile_id}].delay_state must be a string")
+
+        normalized_delay_state = delay_state.strip().lower()
+        if normalized_delay_state not in {"success", "error"}:
+            continue
+
+        delay_results[profile_id] = {
+            "delay_value": delay_value.strip(),
+            "delay_status": delay_status.strip(),
+            "delay_state": normalized_delay_state,
+        }
+
+    return delay_results
+
+
+def save_delay_result(
+    profile_id: str,
+    delay_value: str,
+    delay_status: str,
+    delay_state: str,
+    config_path: str | None = None,
+) -> None:
+    normalized_profile_id = profile_id.strip()
+    if not normalized_profile_id:
+        raise ValueError("profile_id must not be empty")
+
+    config = load_config(config_path)
+    delay_results = load_delay_results(config)
+    normalized_delay_state = delay_state.strip().lower()
+    if normalized_delay_state not in {"success", "error"}:
+        delay_results.pop(normalized_profile_id, None)
+    else:
+        delay_results[normalized_profile_id] = {
+            "delay_value": delay_value.strip(),
+            "delay_status": delay_status.strip(),
+            "delay_state": normalized_delay_state,
+        }
+
+    updated_config = dict(config)
+    updated_config[DELAY_TEST_RESULTS_KEY] = delay_results
+    save_config(updated_config, config_path)
 
 
 def resolve_connect_port(config: dict[str, Any]) -> int:

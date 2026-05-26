@@ -8,6 +8,7 @@
   "CONNECTION_MODE": "clear system proxy",
   "LOCAL_PROXY_PORT": 10809,
   "TUNNEL_DNS_SERVERS": ["1.1.1.1", "1.0.0.1"],
+  "DELAY_TEST_RESULTS": {},
   "XRAY_BINARY_PATH": "xray\\xray.exe",
   "XRAY_SOCKS_PORT": 10808,
   "XRAY_HTTP_PORT": 10809,
