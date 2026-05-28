@@ -7,12 +7,17 @@ from typing import Any
 from tkinter import messagebox
 
 from src.core.config.app_config import (
+    DEFAULT_LOCAL_PROXY_BIND_HOST,
+    LOCAL_PROXY_BIND_ALL_HOST,
     get_active_xray_profile,
+    get_local_proxy_bind_host_warning,
     get_app_dir,
     get_config_port,
     load_config,
     normalize_connection_mode,
+    normalize_local_proxy_bind_host,
     save_delay_result,
+    save_config,
     normalize_xray_log_level,
     replace_xray_profiles,
 )
@@ -22,6 +27,7 @@ from src.services.delay_test import (
     measure_delay_with_temporary_runtime,
 )
 from src.services import relay_runtime
+from src.utils.network_tools import get_default_interface_ipv4
 
 __all__ = [
     "prepare_profiles_for_delay_test",
@@ -29,6 +35,9 @@ __all__ = [
     "parse_port_value",
     "handle_connection_mode_changed",
     "build_updated_config",
+    "is_lan_share_enabled",
+    "resolve_lan_share_display_host",
+    "handle_lan_share_toggled",
     "cleanup_runtime_config",
     "write_runtime_config",
     "build_headless_command",
@@ -119,6 +128,7 @@ def build_updated_config(
     connect_ip = panel.connect_ip_var.get().strip()
     fake_sni = panel.fake_sni_var.get().strip()
     connection_mode = normalize_connection_mode(panel.connection_mode_var.get())
+    local_proxy_bind_host = normalize_local_proxy_bind_host(panel.local_proxy_bind_host_var.get())
     local_proxy_port = parse_port_value(panel.local_proxy_port_var.get(), "LOCAL_PROXY_PORT")
     log_level = normalize_xray_log_level(panel.log_level_var.get())
     listen_port = get_config_port(config, "LISTEN_PORT", 40443)
@@ -145,9 +155,121 @@ def build_updated_config(
     updated_config["CONNECT_IP"] = connect_ip
     updated_config["FAKE_SNI"] = fake_sni
     updated_config["CONNECTION_MODE"] = connection_mode
+    updated_config["LOCAL_PROXY_BIND_HOST"] = local_proxy_bind_host
     updated_config["LOCAL_PROXY_PORT"] = local_proxy_port
     updated_config["XRAY_LOG_LEVEL"] = log_level
     return updated_config
+
+
+def is_lan_share_enabled(bind_host: str) -> bool:
+    return normalize_local_proxy_bind_host(bind_host) != DEFAULT_LOCAL_PROXY_BIND_HOST
+
+
+def resolve_lan_share_display_host(bind_host: str, connect_ip: str) -> str:
+    normalized_bind_host = normalize_local_proxy_bind_host(bind_host)
+    if normalized_bind_host not in {DEFAULT_LOCAL_PROXY_BIND_HOST, LOCAL_PROXY_BIND_ALL_HOST}:
+        return normalized_bind_host
+
+    probe_target = connect_ip.strip() or "8.8.8.8"
+    return get_default_interface_ipv4(probe_target)
+
+
+def build_lan_share_log_messages(
+    bind_host: str,
+    local_proxy_port: int,
+    connect_ip: str,
+    *,
+    prefix: str = "[loaded]",
+    future_tense: bool = False,
+) -> list[str]:
+    normalized_bind_host = normalize_local_proxy_bind_host(bind_host)
+    if normalized_bind_host == DEFAULT_LOCAL_PROXY_BIND_HOST:
+        if future_tense:
+            return [
+                f"{prefix} LAN share off; next start will keep the mixed proxy on 127.0.0.1:{local_proxy_port} only"
+            ]
+        return [
+            f"{prefix} LAN share off; mixed proxy is bound to 127.0.0.1:{local_proxy_port} only"
+        ]
+
+    if normalized_bind_host == LOCAL_PROXY_BIND_ALL_HOST:
+        client_host = resolve_lan_share_display_host(normalized_bind_host, connect_ip)
+        endpoint_suffix = ""
+        if client_host:
+            endpoint_suffix = f"; LAN devices should use {client_host}:{local_proxy_port}"
+        return [
+            (
+                f"{prefix} LAN share active; mixed proxy binds to 0.0.0.0:{local_proxy_port}"
+                f"{endpoint_suffix}"
+            ),
+            (
+                f"{prefix} allow Windows Firewall access only on private or trusted networks; "
+                "the LAN proxy has no authentication"
+            ),
+        ]
+
+    return [
+        (
+            f"{prefix} LAN share active; mixed proxy binds to {normalized_bind_host}:{local_proxy_port} "
+            f"while local apps still use 127.0.0.1:{local_proxy_port}"
+        ),
+        (
+            f"{prefix} allow Windows Firewall access only on private or trusted networks; "
+            "the LAN proxy has no authentication"
+        ),
+    ]
+
+
+def handle_lan_share_toggled(panel: Any) -> None:
+    previous_bind_host = normalize_local_proxy_bind_host(panel.local_proxy_bind_host_var.get())
+    is_running = panel._is_process_running()
+
+    if panel.lan_share_enabled_var.get():
+        target_bind_host = (
+            previous_bind_host
+            if previous_bind_host not in {"", DEFAULT_LOCAL_PROXY_BIND_HOST}
+            else LOCAL_PROXY_BIND_ALL_HOST
+        )
+        warning = get_local_proxy_bind_host_warning(target_bind_host)
+        if warning and not messagebox.askyesno(
+            "Enable LAN Share",
+            f"{warning}\n\nOnly enable LAN sharing on a trusted Wi-Fi or LAN.",
+            parent=panel,
+        ):
+            panel._apply_lan_share_bind_host(previous_bind_host)
+            return
+    else:
+        target_bind_host = DEFAULT_LOCAL_PROXY_BIND_HOST
+
+    try:
+        updated_config = build_updated_config(
+            panel,
+            require_active_profile=is_running,
+        )
+        updated_config["LOCAL_PROXY_BIND_HOST"] = target_bind_host
+        save_config(updated_config)
+
+        if is_running:
+            if panel.process is None or panel.runtime_config_path is None:
+                raise RuntimeError("The running relay runtime config is not available")
+            relay_runtime.update_running_runtime_config(
+                panel.runtime_config_path,
+                updated_config,
+                runtime_pid=panel.process.pid,
+            )
+        else:
+            for message in build_lan_share_log_messages(
+                target_bind_host,
+                parse_port_value(panel.local_proxy_port_var.get(), "LOCAL_PROXY_PORT"),
+                panel.connect_ip_var.get(),
+                future_tense=True,
+            ):
+                panel._append_log(message)
+
+        panel._apply_lan_share_bind_host(target_bind_host)
+    except Exception as exc:
+        panel._apply_lan_share_bind_host(previous_bind_host)
+        messagebox.showerror("Failed To Apply LAN Share", str(exc), parent=panel)
 
 
 def cleanup_runtime_config(panel: Any) -> None:

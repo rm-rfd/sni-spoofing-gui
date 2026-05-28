@@ -13,6 +13,9 @@ class XrayConfigError(ValueError):
 
 XRAY_INBOUND_MODE_MIXED = "mixed"
 XRAY_INBOUND_MODE_TUN = "tun"
+XRAY_MIXED_INBOUND_TAG = "mixed-in"
+XRAY_SHARED_MIXED_INBOUND_TAG = "mixed-share-in"
+XRAY_TUN_INBOUND_TAG = "tun-in"
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class XrayLocalProxySettings:
     mixed_port: int
     log_level: str
     inbound_mode: str = XRAY_INBOUND_MODE_MIXED
+    shared_mixed_host: str | None = None
     tun_address: str = "198.18.0.1"
     tun_network: str = "tcp,udp"
     tun_mtu: int = 1500
@@ -39,8 +43,30 @@ class XrayLocalProxySettings:
     @property
     def inbound_tag(self) -> str:
         if self.inbound_mode == XRAY_INBOUND_MODE_TUN:
-            return "tun-in"
-        return "mixed-in"
+            return XRAY_TUN_INBOUND_TAG
+        return XRAY_MIXED_INBOUND_TAG
+
+    @property
+    def mixed_bind_hosts(self) -> tuple[str, ...]:
+        shared_host = (self.shared_mixed_host or "").strip()
+        if not shared_host or shared_host == self.mixed_host:
+            return (self.mixed_host,)
+        if shared_host == "0.0.0.0":
+            return (shared_host,)
+        return (self.mixed_host, shared_host)
+
+    @property
+    def mixed_inbound_tags(self) -> tuple[str, ...]:
+        if len(self.mixed_bind_hosts) == 1:
+            return (XRAY_MIXED_INBOUND_TAG,)
+        return (XRAY_MIXED_INBOUND_TAG, XRAY_SHARED_MIXED_INBOUND_TAG)
+
+    @property
+    def inbound_tags(self) -> tuple[str, ...]:
+        tags = list(self.mixed_inbound_tags)
+        if self.uses_tun:
+            tags.append(XRAY_TUN_INBOUND_TAG)
+        return tuple(tags)
 
     @property
     def uses_tun(self) -> bool:
@@ -217,31 +243,42 @@ def _build_proxy_outbound(
     }
 
 
-def _build_inbound(proxy_settings: XrayLocalProxySettings) -> dict[str, Any]:
-    if proxy_settings.inbound_mode == XRAY_INBOUND_MODE_MIXED:
-        return {
-            "tag": proxy_settings.inbound_tag,
-            "listen": proxy_settings.mixed_host,
+def _build_mixed_inbounds(proxy_settings: XrayLocalProxySettings) -> list[dict[str, Any]]:
+    return [
+        {
+            "tag": tag,
+            "listen": host,
             "port": proxy_settings.mixed_port,
             "protocol": "mixed",
             "settings": {"auth": "noauth", "udp": False},
             "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
         }
+        for host, tag in zip(proxy_settings.mixed_bind_hosts, proxy_settings.mixed_inbound_tags)
+    ]
 
-    if proxy_settings.inbound_mode == XRAY_INBOUND_MODE_TUN:
-        return {
-            "tag": proxy_settings.inbound_tag,
-            "protocol": "tun",
-            "port": 0,
-            "settings": {
-                "address": proxy_settings.tun_address,
-                "net": proxy_settings.tun_network,
-                "mtu": proxy_settings.tun_mtu,
-            },
-            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
-        }
 
-    raise XrayConfigError(f"unsupported xray inbound mode: {proxy_settings.inbound_mode}")
+def _build_tun_inbound(proxy_settings: XrayLocalProxySettings) -> dict[str, Any]:
+    return {
+        "tag": XRAY_TUN_INBOUND_TAG,
+        "protocol": "tun",
+        "port": 0,
+        "settings": {
+            "address": proxy_settings.tun_address,
+            "net": proxy_settings.tun_network,
+            "mtu": proxy_settings.tun_mtu,
+        },
+        "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+    }
+
+
+def _build_inbounds(proxy_settings: XrayLocalProxySettings) -> list[dict[str, Any]]:
+    if proxy_settings.inbound_mode not in {XRAY_INBOUND_MODE_MIXED, XRAY_INBOUND_MODE_TUN}:
+        raise XrayConfigError(f"unsupported xray inbound mode: {proxy_settings.inbound_mode}")
+
+    inbounds = _build_mixed_inbounds(proxy_settings)
+    if proxy_settings.uses_tun:
+        inbounds.append(_build_tun_inbound(proxy_settings))
+    return inbounds
 
 
 def build_xray_config(
@@ -271,13 +308,13 @@ def build_xray_config(
 
     return {
         "log": {"loglevel": proxy_settings.log_level},
-        "inbounds": [_build_inbound(proxy_settings)],
+        "inbounds": _build_inbounds(proxy_settings),
         "routing": {
             "domainStrategy": "AsIs",
             "rules": [
                 {
                     "type": "field",
-                    "inboundTag": [proxy_settings.inbound_tag],
+                    "inboundTag": list(proxy_settings.inbound_tags),
                     "outboundTag": "proxy",
                 }
             ],

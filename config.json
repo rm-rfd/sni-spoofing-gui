@@ -6,9 +6,15 @@
   "CONNECT_PORT": 443,
   "FAKE_SNI": "www.hcaptcha.com",
   "CONNECTION_MODE": "clear system proxy",
+  "LOCAL_PROXY_BIND_HOST": "127.0.0.1",
   "LOCAL_PROXY_PORT": 10404,
-  "TUNNEL_DNS_SERVERS": ["1.1.1.1", "1.0.0.1"],
+  "TUNNEL_DNS_SERVERS": [
+    "1.1.1.1",
+    "1.0.0.1"
+  ],
   "DELAY_TEST_RESULTS": {},
   "XRAY_BINARY_PATH": "xray\\xray.exe",
-  "XRAY_LOG_LEVEL": "warning"
+  "XRAY_LOG_LEVEL": "warning",
+  "XRAY_PROFILES": [],
+  "XRAY_ACTIVE_PROFILE_ID": ""
 }

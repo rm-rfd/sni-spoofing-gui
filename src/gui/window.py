@@ -12,9 +12,11 @@ from tkinter import messagebox, ttk
 
 from src.core.config.app_config import (
     CONNECTION_MODES,
+    DEFAULT_LOCAL_PROXY_BIND_HOST,
     XRAY_LOG_LEVELS,
     get_app_dir,
     get_connection_mode,
+    get_local_proxy_bind_host,
     get_local_proxy_port,
     load_config,
     load_delay_results,
@@ -45,7 +47,7 @@ from src.gui.theme import (
     iter_private_font_paths as _iter_private_font_paths,
     style_menu,
 )
-from src.gui.widgets import RoundedPanel, SurfaceButton
+from src.gui.widgets import RoundedPanel, SurfaceButton, ToggleSwitch
 from src.services.delay_test import DelayTestResult
 
 
@@ -54,8 +56,8 @@ class ControlPanel(tk.Tk):
         super().__init__()
         self.title(f"{APP_NAME} v{APP_VERSION}")
 
-        self.geometry("1240x840")
-        self.minsize(1080, 720)
+        self.geometry("1280x840")
+        self.minsize(1280, 720)
         self._window_icon: tk.PhotoImage | None = None
         self._private_font_paths: list[Path] = []
         self._font_families: dict[str, str] = {}
@@ -84,12 +86,17 @@ class ControlPanel(tk.Tk):
         self.connect_ip_var = tk.StringVar()
         self.fake_sni_var = tk.StringVar()
         self.connection_mode_var = tk.StringVar(value=CONNECTION_MODES[0])
+        self.local_proxy_bind_host_var = tk.StringVar(value=DEFAULT_LOCAL_PROXY_BIND_HOST)
         self.local_proxy_port_var = tk.StringVar()
+        self.lan_share_enabled_var = tk.BooleanVar(value=False)
+        self.lan_share_header_var = tk.StringVar(value="LAN SHARING")
+        self.lan_share_endpoint_var = tk.StringVar(value="LAN address unavailable")
         self.log_level_var = tk.StringVar(value="warning")
         self.profile_status_var = tk.StringVar(value="No active Xray profile selected.")
         self.status_var = tk.StringVar(value="Stopped")
         self.relay_chip_var = tk.StringVar(value="Stopped")
         self._context_menu_target: tk.Misc | None = None
+        self.lan_share_switch: ToggleSwitch | None = None
 
         self.status_var.trace_add("write", self._sync_status_widgets)
         self._bootstrap_assets()
@@ -410,9 +417,24 @@ class ControlPanel(tk.Tk):
             sticky="w",
         )
 
+        lan_share_wrap = ttk.Frame(header, style="Section.TFrame")
+        lan_share_wrap.grid(row=0, column=1, sticky="e", padx=(0, 12))
+        ttk.Label(
+            lan_share_wrap,
+            textvariable=self.lan_share_header_var,
+            style="CardLabel.TLabel",
+        ).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        self.lan_share_switch = ToggleSwitch(
+            lan_share_wrap,
+            theme=THEME,
+            variable=self.lan_share_enabled_var,
+            command=self._on_lan_share_toggled,
+        )
+        self.lan_share_switch.grid(row=0, column=1, sticky="e")
+
         connection_mode_wrap = ttk.Frame(header, style="Section.TFrame")
-        connection_mode_wrap.grid(row=0, column=1, sticky="e", padx=(0, 12))
-        ttk.Label(connection_mode_wrap, text="CONNECTION MODE", style="CardLabel.TLabel").grid(
+        connection_mode_wrap.grid(row=0, column=2, sticky="e", padx=(0, 12))
+        ttk.Label(connection_mode_wrap, text="Connection Mode", style="CardLabel.TLabel").grid(
             row=0,
             column=0,
             sticky="e",
@@ -430,8 +452,8 @@ class ControlPanel(tk.Tk):
         self.connection_mode_combo.bind("<<ComboboxSelected>>", self._on_connection_mode_changed, add="+")
 
         log_level_wrap = ttk.Frame(header, style="Section.TFrame")
-        log_level_wrap.grid(row=0, column=2, sticky="e")
-        ttk.Label(log_level_wrap, text="XRAY LOG LEVEL", style="CardLabel.TLabel").grid(
+        log_level_wrap.grid(row=0, column=3, sticky="e")
+        ttk.Label(log_level_wrap, text="Log Level", style="CardLabel.TLabel").grid(
             row=0,
             column=0,
             sticky="e",
@@ -447,7 +469,16 @@ class ControlPanel(tk.Tk):
         )
         self.log_level_combo.grid(row=0, column=1, sticky="e")
 
-        self._build_settings_card(section, 1, 0, "CONNECT IP", self.connect_ip_var, "lan", total_columns=3)
+        connect_ip_entry = self._build_settings_card(
+            section,
+            1,
+            0,
+            "CONNECT IP",
+            self.connect_ip_var,
+            "lan",
+            total_columns=3,
+        )
+        connect_ip_entry.bind("<FocusOut>", self._on_connect_ip_changed, add="+")
         self._build_settings_card(section, 1, 1, "FAKE SNI", self.fake_sni_var, "public", total_columns=3)
         local_proxy_entry = self._build_settings_card(
             section,
@@ -1041,6 +1072,44 @@ class ControlPanel(tk.Tk):
 
         self._sync_profile_action_state()
 
+    def _apply_lan_share_bind_host(self, bind_host: str) -> None:
+        self.local_proxy_bind_host_var.set(bind_host)
+        self.lan_share_enabled_var.set(relay_helpers.is_lan_share_enabled(bind_host))
+        self._refresh_lan_share_details()
+
+    def _refresh_lan_share_details(self) -> None:
+        bind_host = self.local_proxy_bind_host_var.get().strip() or DEFAULT_LOCAL_PROXY_BIND_HOST
+        is_enabled = relay_helpers.is_lan_share_enabled(bind_host)
+        endpoint_host = relay_helpers.resolve_lan_share_display_host(
+            bind_host,
+            self.connect_ip_var.get(),
+        )
+        proxy_port = self.local_proxy_port_var.get().strip()
+
+        if endpoint_host and proxy_port:
+            endpoint_label = f"{endpoint_host}:{proxy_port}"
+        elif endpoint_host:
+            endpoint_label = endpoint_host
+        elif proxy_port:
+            endpoint_label = f"LAN address unavailable:{proxy_port}"
+        else:
+            endpoint_label = "LAN address unavailable"
+
+        self.lan_share_endpoint_var.set(endpoint_label)
+        self.lan_share_header_var.set(f"Lan Sharing ({endpoint_label})")
+
+        if self.lan_share_switch is not None:
+            if is_enabled:
+                self.lan_share_switch.state(["!disabled"])
+            else:
+                self.lan_share_switch.state(["!disabled"])
+
+    def _on_connect_ip_changed(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self._refresh_lan_share_details()
+
+    def _on_lan_share_toggled(self) -> None:
+        relay_helpers.handle_lan_share_toggled(self)
+
     def _is_process_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
@@ -1099,8 +1168,11 @@ class ControlPanel(tk.Tk):
         self.connect_ip_var.set(str(config.get("CONNECT_IP", "")))
         self.fake_sni_var.set(str(config.get("FAKE_SNI", "")))
         self.connection_mode_var.set(get_connection_mode(config))
+        self.local_proxy_bind_host_var.set(get_local_proxy_bind_host(config))
         self.local_proxy_port_var.set(str(get_local_proxy_port(config)))
         self.log_level_var.set(str(config.get("XRAY_LOG_LEVEL", "warning")).strip().lower())
+        self.lan_share_enabled_var.set(relay_helpers.is_lan_share_enabled(self.local_proxy_bind_host_var.get()))
+        self._refresh_lan_share_details()
 
         # Load delay test results BEFORE loading profiles so they display correctly
         try:
@@ -1121,6 +1193,7 @@ class ControlPanel(tk.Tk):
         try:
             config = load_config()
             config["CONNECTION_MODE"] = normalize_connection_mode(self.connection_mode_var.get())
+            config["LOCAL_PROXY_BIND_HOST"] = self.local_proxy_bind_host_var.get().strip() or DEFAULT_LOCAL_PROXY_BIND_HOST
             config["LOCAL_PROXY_PORT"] = self._parse_port_value(
                 self.local_proxy_port_var.get(),
                 "LOCAL_PROXY_PORT",
@@ -1137,6 +1210,7 @@ class ControlPanel(tk.Tk):
         _event: tk.Event[tk.Misc] | None = None,
     ) -> None:
         self._persist_proxy_mode_settings_to_disk(show_errors=False)
+        self._refresh_lan_share_details()
 
     def _on_connection_mode_changed(
         self,

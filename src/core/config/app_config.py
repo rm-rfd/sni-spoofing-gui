@@ -19,6 +19,8 @@ CONNECTION_MODES = (
 )
 DEFAULT_CONNECTION_MODE = CONNECTION_MODES[0]
 DEFAULT_LOCAL_PROXY_PORT = 10809
+DEFAULT_LOCAL_PROXY_BIND_HOST = "127.0.0.1"
+LOCAL_PROXY_BIND_ALL_HOST = "0.0.0.0"
 DEFAULT_TUNNEL_DNS_SERVERS = ("1.1.1.1", "1.0.0.1")
 DELAY_TEST_RESULTS_KEY = "DELAY_TEST_RESULTS"
 XRAY_PROFILES_KEY = "XRAY_PROFILES"
@@ -262,6 +264,7 @@ def normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     normalized_config[XRAY_PROFILES_KEY] = profiles
     normalized_config[XRAY_ACTIVE_PROFILE_ID_KEY] = "" if active_profile is None else active_profile["id"]
     normalized_config["CONNECTION_MODE"] = get_connection_mode(normalized_config)
+    normalized_config["LOCAL_PROXY_BIND_HOST"] = get_local_proxy_bind_host(normalized_config)
     normalized_config["LOCAL_PROXY_PORT"] = get_local_proxy_port(normalized_config)
     normalized_config["TUNNEL_DNS_SERVERS"] = list(get_tunnel_dns_servers(normalized_config))
     return normalized_config
@@ -368,6 +371,44 @@ def get_local_proxy_port(
     default: int = DEFAULT_LOCAL_PROXY_PORT,
 ) -> int:
     return get_config_port(config, "LOCAL_PROXY_PORT", default)
+
+
+def normalize_local_proxy_bind_host(
+    raw_value: str,
+    default: str = DEFAULT_LOCAL_PROXY_BIND_HOST,
+) -> str:
+    normalized = raw_value.strip()
+    if not normalized:
+        return default
+
+    try:
+        parsed = ipaddress.ip_address(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            "LOCAL_PROXY_BIND_HOST must be a valid IPv4 address or the wildcard 0.0.0.0"
+        ) from exc
+
+    if parsed.version != 4:
+        raise ValueError("LOCAL_PROXY_BIND_HOST currently supports IPv4 only")
+
+    return str(parsed)
+
+
+def get_local_proxy_bind_host(
+    config: dict[str, Any],
+    default: str = DEFAULT_LOCAL_PROXY_BIND_HOST,
+) -> str:
+    raw_value = get_config_string(config, "LOCAL_PROXY_BIND_HOST", default)
+    return normalize_local_proxy_bind_host(raw_value, default)
+
+
+def get_local_proxy_bind_host_warning(bind_host: str) -> str | None:
+    if normalize_local_proxy_bind_host(bind_host) != LOCAL_PROXY_BIND_ALL_HOST:
+        return None
+    return (
+        "Binding the local mixed proxy to 0.0.0.0 exposes an unauthenticated proxy to "
+        "other devices on the local network."
+    )
 
 
 def get_tunnel_dns_servers(

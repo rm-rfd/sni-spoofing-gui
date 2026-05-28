@@ -6,7 +6,7 @@ from typing import Callable
 
 from .theme import THEME
 
-__all__ = ["SurfaceButton", "RoundedPanel"]
+__all__ = ["SurfaceButton", "ToggleSwitch", "RoundedPanel"]
 
 
 class SurfaceButton:
@@ -339,6 +339,12 @@ class SurfaceButton:
         self._text = text
         self._apply_style()
 
+    def set_variant(self, variant: str) -> None:
+        if variant == self._variant:
+            return
+        self._variant = variant
+        self._apply_style()
+
     def set_command(self, command: Callable[[], None] | None) -> None:
         self._command = command
 
@@ -368,6 +374,250 @@ class SurfaceButton:
                 self._disabled = False
         self._hovered = False
         self._apply_style()
+
+    def grid(self, *args: object, **kwargs: object) -> None:
+        self._canvas.grid(*args, **kwargs)
+
+    def pack(self, *args: object, **kwargs: object) -> None:
+        self._canvas.pack(*args, **kwargs)
+
+    def place(self, *args: object, **kwargs: object) -> None:
+        self._canvas.place(*args, **kwargs)
+
+
+class ToggleSwitch:
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        theme: dict[str, str],
+        variable: tk.BooleanVar,
+        command: Callable[[], None] | None = None,
+        width: int = 34,
+        height: int = 18,
+    ) -> None:
+        self._theme = theme
+        self._variable = variable
+        self._command = command
+        self._width = width
+        self._height = height
+        self._disabled = False
+        self._hovered = False
+        self._trace_id: str | None = None
+
+        self._parent_bg = str(master.cget("bg")) if "bg" in master.keys() else theme["card"]
+        self._canvas = tk.Canvas(
+            master,
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+            takefocus=1,
+            width=width,
+            height=height,
+            background=self._parent_bg,
+            cursor="hand2",
+        )
+        for sequence in ("<Enter>", "<Leave>", "<Button-1>", "<Return>", "<space>"):
+            handler = {
+                "<Enter>": self._on_enter,
+                "<Leave>": self._on_leave,
+                "<Button-1>": self._invoke,
+                "<Return>": self._invoke,
+                "<space>": self._invoke,
+            }[sequence]
+            self._canvas.bind(sequence, handler, add="+")
+        self._canvas.bind("<Destroy>", self._on_destroy, add="+")
+
+        self._trace_id = self._variable.trace_add("write", self._on_variable_changed)
+        self._redraw()
+
+    def _rounded_points(self, x1: float, y1: float, x2: float, y2: float, radius: float) -> list[float]:
+        return [
+            x1 + radius,
+            y1,
+            x1 + radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2 - radius,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + radius,
+            x2,
+            y1 + radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2 - radius,
+            x2,
+            y2,
+            x2 - radius,
+            y2,
+            x2 - radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1 + radius,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - radius,
+            x1,
+            y2 - radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1 + radius,
+            x1,
+            y1,
+        ]
+
+    def _track_tokens(self) -> tuple[str, str, str]:
+        if self._disabled:
+            return self._theme["strong"], self._theme["input_border"], self._theme["muted"]
+        if bool(self._variable.get()):
+            return self._theme["accent"], self._theme["accent"], self._theme["base_bg"]
+        if self._hovered:
+            return self._theme["strong"], self._theme["accent"], self._theme["text"]
+        return self._theme["strong"], self._theme["input_border"], self._theme["text"]
+
+    def _draw_capsule(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        fill: str,
+        outline: str,
+    ) -> None:
+        diameter = max(0.0, y2 - y1)
+        if diameter <= 0:
+            return
+
+        if x2 - x1 <= diameter:
+            self._canvas.create_oval(x1, y1, x2, y2, fill=fill, outline="", width=0)
+            self._canvas.create_oval(x1, y1, x2, y2, fill="", outline=outline, width=1)
+            return
+
+        radius = diameter / 2
+        center_left = x1 + radius
+        center_right = x2 - radius
+        self._canvas.create_rectangle(center_left, y1, center_right, y2, fill=fill, outline="", width=0)
+        self._canvas.create_oval(x1, y1, x1 + diameter, y2, fill=fill, outline="", width=0)
+        self._canvas.create_oval(x2 - diameter, y1, x2, y2, fill=fill, outline="", width=0)
+        self._canvas.create_arc(
+            x1,
+            y1,
+            x1 + diameter,
+            y2,
+            start=90,
+            extent=180,
+            style=tk.ARC,
+            outline=outline,
+            width=1,
+        )
+        self._canvas.create_arc(
+            x2 - diameter,
+            y1,
+            x2,
+            y2,
+            start=270,
+            extent=180,
+            style=tk.ARC,
+            outline=outline,
+            width=1,
+        )
+        self._canvas.create_line(center_left, y1, center_right, y1, fill=outline, width=1)
+        self._canvas.create_line(center_left, y2, center_right, y2, fill=outline, width=1)
+
+    def _redraw(self) -> None:
+        width = max(self._width, self._canvas.winfo_width())
+        height = max(self._height, self._canvas.winfo_height())
+        track_fill, track_border, thumb_fill = self._track_tokens()
+
+        self._canvas.configure(
+            width=self._width,
+            height=self._height,
+            bg=self._parent_bg,
+            cursor="arrow" if self._disabled else "hand2",
+        )
+        self._canvas.delete("all")
+
+        track_x1 = 1
+        track_y1 = 1
+        track_x2 = width - 1
+        track_y2 = height - 1
+        self._draw_capsule(
+            track_x1,
+            track_y1,
+            track_x2,
+            track_y2,
+            fill=track_fill,
+            outline=track_border,
+        )
+
+        thumb_diameter = max(10, height - 6)
+        thumb_y1 = (height - thumb_diameter) / 2
+        thumb_y2 = thumb_y1 + thumb_diameter
+        if bool(self._variable.get()):
+            thumb_x1 = width - thumb_diameter - 3
+        else:
+            thumb_x1 = 3
+        thumb_x2 = thumb_x1 + thumb_diameter
+        self._canvas.create_oval(
+            thumb_x1,
+            thumb_y1,
+            thumb_x2,
+            thumb_y2,
+            fill=thumb_fill,
+            outline=thumb_fill,
+            width=1,
+        )
+
+    def _on_variable_changed(self, *_args: str) -> None:
+        self._redraw()
+
+    def _on_enter(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._disabled:
+            return
+        self._hovered = True
+        self._redraw()
+
+    def _on_leave(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._disabled:
+            return
+        self._hovered = False
+        self._redraw()
+
+    def _invoke(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        if self._disabled:
+            return "break"
+        self._variable.set(not bool(self._variable.get()))
+        if self._command is not None:
+            self._command()
+        return "break"
+
+    def _on_destroy(self, _event: tk.Event[tk.Misc]) -> None:
+        if self._trace_id is None:
+            return
+        try:
+            self._variable.trace_remove("write", self._trace_id)
+        except tk.TclError:
+            pass
+        self._trace_id = None
+
+    def state(self, state_specs: list[str]) -> None:
+        for state_spec in state_specs:
+            if state_spec == "disabled":
+                self._disabled = True
+            elif state_spec == "!disabled":
+                self._disabled = False
+        self._hovered = False
+        self._redraw()
 
     def grid(self, *args: object, **kwargs: object) -> None:
         self._canvas.grid(*args, **kwargs)

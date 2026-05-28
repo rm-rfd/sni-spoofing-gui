@@ -6,7 +6,7 @@ import socket
 import sys
 import traceback
 
-from src.core.runtime.runtime_controller import RelayRuntimeController
+from src.core.runtime.runtime_controller import RelayRuntimeController, describe_xray_bind_messages
 from src.utils.packet_templates import ClientHelloMaker
 from src.core.runtime import runtime_state
 
@@ -166,13 +166,18 @@ def run_headless(config_path: str | None = None) -> int:
         )
         log_line()
         if xray_settings is not None:
+            mixed_targets = ", ".join(
+                f"{host}:{xray_settings.mixed_port}"
+                for host in xray_settings.mixed_bind_hosts
+            )
             if xray_settings.uses_tun:
-                log_line("Bundled Xray started. TUN inbound is active.")
-            else:
                 log_line(
-                    f"Bundled Xray started. Mixed proxy: "
-                    f"{xray_settings.mixed_host}:{xray_settings.mixed_port}"
+                    f"Bundled Xray started. Mixed proxy: {mixed_targets}; TUN inbound is active."
                 )
+            else:
+                log_line(f"Bundled Xray started. Mixed proxy: {mixed_targets}")
+            for message in describe_xray_bind_messages(xray_settings):
+                log_line(message)
         asyncio.run(main())
     finally:
         controller.stop()

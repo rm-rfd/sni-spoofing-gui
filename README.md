@@ -57,9 +57,11 @@ The GUI stores direct `vless://` and `trojan://` share links in an `XRAY Profile
 
 ## Configuration
 
-Runtime settings live in `config.json`. The most important fields are `LISTEN_HOST`, `LISTEN_PORT`, `CONNECT_IP`, `CONNECT_PORT`, `FORCE_CONNECT_PORT`, `FAKE_SNI`, `CONNECTION_MODE`, `LOCAL_PROXY_PORT`, `TUNNEL_DNS_SERVERS`, `XRAY_PROFILES`, `XRAY_ACTIVE_PROFILE_ID`, `XRAY_BINARY_PATH`, `XRAY_LOG_LEVEL`, and `XRAY_RELAY_HOST`.
+Runtime settings live in `config.json`. The most important fields are `LISTEN_HOST`, `LISTEN_PORT`, `CONNECT_IP`, `CONNECT_PORT`, `FORCE_CONNECT_PORT`, `FAKE_SNI`, `CONNECTION_MODE`, `LOCAL_PROXY_BIND_HOST`, `LOCAL_PROXY_PORT`, `TUNNEL_DNS_SERVERS`, `XRAY_PROFILES`, `XRAY_ACTIVE_PROFILE_ID`, `XRAY_BINARY_PATH`, `XRAY_LOG_LEVEL`, and `XRAY_RELAY_HOST`.
 
 `TUNNEL_DNS_SERVERS` is a list of IPv4 DNS servers that the app applies to the Xray tunnel adapter while `tunnel whole system` is active. The current default is Cloudflare IPv4 (`1.1.1.1`, `1.0.0.1`).
+
+`LOCAL_PROXY_BIND_HOST` controls which IPv4 address the local Xray mixed proxy binds to. The default is `127.0.0.1`. Set it to `0.0.0.0` only when you intentionally want other devices on the same LAN to use the proxy, because the mixed proxy is unauthenticated. If Windows Firewall prompts while LAN sharing is enabled, allow the app only on private or otherwise trusted networks.
 
 `FAKE_SNI` only changes the spoofed value in the injected packet. It does not affect DNS resolution or choose the upstream IP.
 

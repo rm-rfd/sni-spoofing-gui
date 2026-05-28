@@ -9,9 +9,18 @@ import json
 import os
 from pathlib import Path
 import threading
+import time
 from typing import Callable
 
-from src.core.config.app_config import get_app_dir, get_connection_mode, get_local_proxy_port
+from src.core.config.app_config import (
+    get_app_dir,
+    get_config_port,
+    get_config_string,
+    get_connection_mode,
+    get_local_proxy_port,
+    load_config,
+    resolve_connect_port,
+)
 from src.core.runtime import runtime_state
 from src.core.runtime.system_proxy import (
     WindowsSystemProxyState,
@@ -29,7 +38,43 @@ from src.core.xray.config import XrayLocalProxySettings
 from src.core.xray.process import XrayProcessManager
 
 RUNTIME_OWNERSHIP_STATE_FILE = ".rm-sni-spoofer-runtime-state.json"
+RUNTIME_COMMAND_FILE = ".rm-sni-spoofer-runtime-command.json"
+RUNTIME_COMMAND_RESPONSE_FILE = ".rm-sni-spoofer-runtime-command-response.json"
+RUNTIME_COMMAND_ACTION_RELOAD_XRAY = "reload_xray"
 LogCallback = Callable[[str], None]
+
+
+def describe_xray_bind_messages(
+    xray_settings: XrayLocalProxySettings,
+    *,
+    prefix: str = "[start]",
+) -> tuple[str, ...]:
+    mixed_port = xray_settings.mixed_port
+    mixed_targets = tuple(f"{host}:{mixed_port}" for host in xray_settings.mixed_bind_hosts)
+    if mixed_targets == (f"127.0.0.1:{mixed_port}",):
+        return (
+            f"{prefix} LAN share off; mixed proxy is bound to 127.0.0.1:{mixed_port} only",
+        )
+
+    if mixed_targets == (f"0.0.0.0:{mixed_port}",):
+        return (
+            f"{prefix} LAN share active; mixed proxy is bound to 0.0.0.0:{mixed_port} for local and LAN clients",
+            (
+                f"{prefix} allow Windows Firewall access only on private or trusted networks; "
+                "the LAN proxy has no authentication"
+            ),
+        )
+
+    lan_targets = tuple(target for target in mixed_targets if not target.startswith("127.0.0.1:"))
+    if not lan_targets:
+        lan_targets = mixed_targets
+    return (
+        f"{prefix} LAN share active; mixed proxy is bound to 127.0.0.1:{mixed_port} and {', '.join(lan_targets)}",
+        (
+            f"{prefix} allow Windows Firewall access only on private or trusted networks; "
+            "the LAN proxy has no authentication"
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +109,19 @@ class RuntimeOwnershipState:
 
 def get_runtime_ownership_state_path() -> Path:
     return Path(get_app_dir()) / RUNTIME_OWNERSHIP_STATE_FILE
+
+
+def get_runtime_command_path() -> Path:
+    return Path(get_app_dir()) / RUNTIME_COMMAND_FILE
+
+
+def get_runtime_command_response_path() -> Path:
+    return Path(get_app_dir()) / RUNTIME_COMMAND_RESPONSE_FILE
+
+
+def cleanup_runtime_command_files() -> None:
+    get_runtime_command_path().unlink(missing_ok=True)
+    get_runtime_command_response_path().unlink(missing_ok=True)
 
 
 def load_runtime_ownership_state(
@@ -194,6 +252,7 @@ class RelayRuntimeController:
     log_callback: LogCallback | None = None
 
     def __post_init__(self) -> None:
+        self._lifecycle_lock = threading.RLock()
         self._atexit_registered = False
         self._stopped = False
         self.ownership_state: RuntimeOwnershipState | None = None
@@ -201,6 +260,8 @@ class RelayRuntimeController:
         self.xray_settings: XrayLocalProxySettings | None = None
         self.tunnel_backend: TunnelBackend | None = None
         self.packet_injector: object | None = None
+        self._command_stop_event = threading.Event()
+        self._command_thread: threading.Thread | None = None
 
     @property
     def connection_mode(self) -> str:
@@ -209,40 +270,43 @@ class RelayRuntimeController:
         return self.ownership_state.connection_mode
 
     def start(self) -> XrayLocalProxySettings | None:
-        repair_stale_runtime_ownership_state(log_callback=self.log_callback)
-        runtime_state.load_runtime_settings(self.config_path)
+        with self._lifecycle_lock:
+            repair_stale_runtime_ownership_state(log_callback=self.log_callback)
+            cleanup_runtime_command_files()
+            runtime_state.load_runtime_settings(self.config_path)
 
-        connection_mode = get_connection_mode(runtime_state.config)
-        if connection_mode == "tunnel whole system":
-            _ensure_tunnel_mode_prerequisites()
-
-        self.ownership_state = RuntimeOwnershipState(
-            pid=os.getpid(),
-            connection_mode=connection_mode,
-            listen_host=runtime_state.LISTEN_HOST,
-            listen_port=runtime_state.LISTEN_PORT,
-            local_proxy_port=get_local_proxy_port(runtime_state.config),
-            config_path="" if not self.config_path else os.path.abspath(self.config_path),
-            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        )
-        write_runtime_ownership_state(self.ownership_state)
-        try:
-            self.xray_manager, self.xray_settings = runtime_state.build_xray_manager()
+            connection_mode = get_connection_mode(runtime_state.config)
             if connection_mode == "tunnel whole system":
-                self._start_tunnel_backend()
-            else:
-                if self.xray_manager is not None:
-                    self.xray_manager.start()
-                self._apply_connection_mode()
-        except Exception:
-            self.stop()
-            raise
+                _ensure_tunnel_mode_prerequisites()
 
-        if not self._atexit_registered:
-            atexit.register(self.stop)
-            self._atexit_registered = True
-        self._stopped = False
-        return self.xray_settings
+            self.ownership_state = RuntimeOwnershipState(
+                pid=os.getpid(),
+                connection_mode=connection_mode,
+                listen_host=runtime_state.LISTEN_HOST,
+                listen_port=runtime_state.LISTEN_PORT,
+                local_proxy_port=get_local_proxy_port(runtime_state.config),
+                config_path="" if not self.config_path else os.path.abspath(self.config_path),
+                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+            write_runtime_ownership_state(self.ownership_state)
+            try:
+                self.xray_manager, self.xray_settings = runtime_state.build_xray_manager()
+                if connection_mode == "tunnel whole system":
+                    self._start_tunnel_backend(runtime_state.config)
+                else:
+                    if self.xray_manager is not None:
+                        self.xray_manager.start()
+                    self._apply_connection_mode()
+            except Exception:
+                self.stop()
+                raise
+
+            self._start_command_watcher()
+            if not self._atexit_registered:
+                atexit.register(self.stop)
+                self._atexit_registered = True
+            self._stopped = False
+            return self.xray_settings
 
     def start_packet_injector(self) -> object:
         from src.core.packet_injection.tcp_injector import FakeTcpInjector
@@ -261,36 +325,39 @@ class RelayRuntimeController:
         return packet_injector
 
     def stop(self) -> None:
-        if self._stopped:
-            return
-        self._stopped = True
-        self._reload_ownership_state_from_disk()
-        cleanup_marker = True
-        try:
-            self._restore_system_proxy_if_owned()
-        except Exception as exc:
-            cleanup_marker = False
-            if self.log_callback is not None:
-                self.log_callback(f"[stop] failed to restore previous system proxy: {exc}")
-        try:
-            self._restore_tunnel_backend_if_owned()
-        except Exception as exc:
-            cleanup_marker = False
-            if self.log_callback is not None:
-                self.log_callback(f"[stop] failed to restore tunnel backend routes: {exc}")
-        finally:
-            if self.tunnel_backend is not None:
-                self.tunnel_backend.stop()
-            else:
-                runtime_state.stop_xray_proxy(self.xray_manager)
-            self.tunnel_backend = None
-            self.xray_manager = None
-            self.xray_settings = None
-            self.packet_injector = None
-            if cleanup_marker:
-                cleanup_runtime_ownership_state()
+        with self._lifecycle_lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            self._stop_command_watcher()
+            self._reload_ownership_state_from_disk()
+            cleanup_marker = True
+            try:
+                self._restore_system_proxy_if_owned()
+            except Exception as exc:
+                cleanup_marker = False
+                if self.log_callback is not None:
+                    self.log_callback(f"[stop] failed to restore previous system proxy: {exc}")
+            try:
+                self._restore_tunnel_backend_if_owned()
+            except Exception as exc:
+                cleanup_marker = False
+                if self.log_callback is not None:
+                    self.log_callback(f"[stop] failed to restore tunnel backend routes: {exc}")
+            finally:
+                if self.tunnel_backend is not None:
+                    self.tunnel_backend.stop()
+                else:
+                    runtime_state.stop_xray_proxy(self.xray_manager)
+                self.tunnel_backend = None
+                self.xray_manager = None
+                self.xray_settings = None
+                self.packet_injector = None
+                cleanup_runtime_command_files()
+                if cleanup_marker:
+                    cleanup_runtime_ownership_state()
 
-    def _start_tunnel_backend(self) -> None:
+    def _start_tunnel_backend(self, config: dict[str, object]) -> None:
         if self.xray_manager is None or self.xray_settings is None:
             raise ValueError("Tunnel whole system mode requires an active Xray profile")
 
@@ -299,7 +366,7 @@ class RelayRuntimeController:
             self.xray_settings,
             log_callback=self.log_callback,
         )
-        self.tunnel_backend.prepare(runtime_state.config)
+        self.tunnel_backend.prepare(config)
         self._update_ownership_state(tunnel_backend_state=self.tunnel_backend.describe_state())
         self.tunnel_backend.start()
         self.tunnel_backend.apply_routes()
@@ -407,6 +474,212 @@ class RelayRuntimeController:
             raise RuntimeError("runtime ownership state is not initialized")
         self.ownership_state = replace(self.ownership_state, **changes)
         write_runtime_ownership_state(self.ownership_state)
+
+    def _start_command_watcher(self) -> None:
+        self._command_stop_event.clear()
+        if self._command_thread is not None and self._command_thread.is_alive():
+            return
+
+        self._command_thread = threading.Thread(
+            target=self._watch_runtime_commands,
+            name="runtime-command-watcher",
+            daemon=True,
+        )
+        self._command_thread.start()
+
+    def _stop_command_watcher(self) -> None:
+        self._command_stop_event.set()
+        if self._command_thread is None:
+            return
+        if self._command_thread is threading.current_thread():
+            return
+        self._command_thread.join(timeout=1.0)
+        self._command_thread = None
+
+    def _watch_runtime_commands(self) -> None:
+        while not self._command_stop_event.wait(0.2):
+            self._process_runtime_command_request()
+
+    def _process_runtime_command_request(self) -> None:
+        request_path = get_runtime_command_path()
+        if not request_path.is_file():
+            return
+
+        request_id = ""
+        response: dict[str, object] = {
+            "request_id": request_id,
+            "ok": False,
+            "detail": "",
+        }
+
+        try:
+            with request_path.open("r", encoding="utf-8") as request_file:
+                payload = json.load(request_file)
+
+            if not isinstance(payload, dict):
+                raise ValueError("runtime command payload must be a JSON object")
+
+            request_id = str(payload.get("request_id", "")).strip()
+            target_pid = payload.get("pid")
+            action = str(payload.get("action", "")).strip()
+            if not request_id:
+                raise ValueError("runtime command request_id is required")
+            if target_pid != os.getpid():
+                raise RuntimeError("runtime command target PID does not match this relay runtime")
+
+            response["request_id"] = request_id
+            if action != RUNTIME_COMMAND_ACTION_RELOAD_XRAY:
+                raise ValueError(f"unsupported runtime command action: {action}")
+
+            xray_settings = self.reload_xray_from_config()
+            response.update(
+                {
+                    "ok": True,
+                    "detail": "xray reloaded",
+                    "mixed_bind_hosts": [] if xray_settings is None else list(xray_settings.mixed_bind_hosts),
+                    "mixed_port": 0 if xray_settings is None else xray_settings.mixed_port,
+                    "uses_tun": False if xray_settings is None else xray_settings.uses_tun,
+                }
+            )
+        except Exception as exc:
+            response["request_id"] = request_id
+            response["ok"] = False
+            response["detail"] = str(exc)
+        finally:
+            request_path.unlink(missing_ok=True)
+
+        response_path = get_runtime_command_response_path()
+        with response_path.open("w", encoding="utf-8", newline="\n") as response_file:
+            json.dump(response, response_file, ensure_ascii=True, indent=2)
+            response_file.write("\n")
+
+    def reload_xray_from_config(self) -> XrayLocalProxySettings | None:
+        with self._lifecycle_lock:
+            if self.ownership_state is None:
+                raise RuntimeError("runtime ownership state is not initialized")
+
+            self._reload_ownership_state_from_disk()
+            config_path = self.ownership_state.config_path or self.config_path
+            updated_config = load_config(config_path)
+            self._validate_xray_reload_config(updated_config)
+
+            previous_state = self.ownership_state
+            previous_connection_mode = previous_state.connection_mode
+            new_connection_mode = get_connection_mode(updated_config)
+            new_local_proxy_port = get_local_proxy_port(updated_config)
+
+            if self.tunnel_backend is not None:
+                self._restore_tunnel_backend_if_owned()
+                self.tunnel_backend.stop()
+                self.tunnel_backend = None
+            else:
+                runtime_state.stop_xray_proxy(self.xray_manager)
+
+            self.xray_manager = None
+            self.xray_settings = None
+            self._update_ownership_state(
+                connection_mode=new_connection_mode,
+                local_proxy_port=new_local_proxy_port,
+                tunnel_backend_state=None,
+            )
+
+            try:
+                self.xray_manager, self.xray_settings = runtime_state.build_xray_manager(updated_config)
+                if new_connection_mode == "tunnel whole system":
+                    self._start_tunnel_backend(updated_config)
+                else:
+                    if self.xray_manager is not None:
+                        self.xray_manager.start()
+                    if previous_connection_mode != new_connection_mode or previous_state.local_proxy_port != new_local_proxy_port:
+                        self._apply_connection_mode()
+
+                runtime_state.config = dict(updated_config)
+                if self.log_callback is not None and self.xray_settings is not None:
+                    mixed_targets = ", ".join(
+                        f"{host}:{self.xray_settings.mixed_port}"
+                        for host in self.xray_settings.mixed_bind_hosts
+                    )
+                    if self.xray_settings.uses_tun:
+                        self.log_callback(
+                            f"[start] reloaded bundled Xray mixed proxy on {mixed_targets}; TUN inbound remains active"
+                        )
+                    else:
+                        self.log_callback(
+                            f"[start] reloaded bundled Xray mixed proxy on {mixed_targets}"
+                        )
+                    for message in describe_xray_bind_messages(self.xray_settings):
+                        self.log_callback(message)
+                return self.xray_settings
+            except Exception:
+                self.ownership_state = previous_state
+                write_runtime_ownership_state(previous_state)
+                raise
+
+    def _validate_xray_reload_config(self, updated_config: dict[str, object]) -> None:
+        if get_config_string(updated_config, "LISTEN_HOST", "0.0.0.0").strip() != runtime_state.LISTEN_HOST:
+            raise ValueError("Stop and restart the relay to apply LISTEN_HOST changes")
+        if get_config_port(updated_config, "LISTEN_PORT", 40443) != runtime_state.LISTEN_PORT:
+            raise ValueError("Stop and restart the relay to apply LISTEN_PORT changes")
+        if get_config_string(updated_config, "CONNECT_IP", "").strip() != runtime_state.CONNECT_IP:
+            raise ValueError("Stop and restart the relay to apply CONNECT_IP changes")
+        if resolve_connect_port(updated_config) != runtime_state.CONNECT_PORT:
+            raise ValueError("Stop and restart the relay to apply CONNECT_PORT changes")
+        if get_config_string(updated_config, "FAKE_SNI", "").strip() != runtime_state.FAKE_SNI.decode(errors="replace"):
+            raise ValueError("Stop and restart the relay to apply FAKE_SNI changes")
+        if runtime_state.get_xray_relay_host(updated_config, runtime_state.LISTEN_HOST) != runtime_state.get_xray_relay_host():
+            raise ValueError("Stop and restart the relay to apply XRAY_RELAY_HOST changes")
+
+
+def request_running_xray_reload(
+    runtime_pid: int,
+    *,
+    timeout: float = 10.0,
+) -> dict[str, object]:
+    state = load_runtime_ownership_state()
+    if state is None:
+        raise RuntimeError("The active relay runtime ownership state is missing")
+    if state.pid != runtime_pid:
+        raise RuntimeError(
+            "The active relay runtime ownership state does not match the running relay process"
+        )
+
+    cleanup_runtime_command_files()
+    request_id = str(time.time_ns())
+    request_path = get_runtime_command_path()
+    with request_path.open("w", encoding="utf-8", newline="\n") as request_file:
+        json.dump(
+            {
+                "request_id": request_id,
+                "pid": runtime_pid,
+                "action": RUNTIME_COMMAND_ACTION_RELOAD_XRAY,
+            },
+            request_file,
+            ensure_ascii=True,
+            indent=2,
+        )
+        request_file.write("\n")
+
+    response_path = get_runtime_command_response_path()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if response_path.is_file():
+            with response_path.open("r", encoding="utf-8") as response_file:
+                response = json.load(response_file)
+            if not isinstance(response, dict):
+                raise RuntimeError("runtime command response must be a JSON object")
+            if str(response.get("request_id", "")).strip() != request_id:
+                time.sleep(0.05)
+                continue
+
+            response_path.unlink(missing_ok=True)
+            if not bool(response.get("ok")):
+                raise RuntimeError(str(response.get("detail", "Running relay rejected the Xray reload request")))
+            return dict(response)
+
+        time.sleep(0.1)
+
+    request_path.unlink(missing_ok=True)
+    raise TimeoutError("Timed out waiting for the running relay to reload its bundled Xray config")
 
 
 def sync_connection_mode_change(
@@ -610,9 +883,14 @@ __all__ = [
     "RuntimeOwnershipState",
     "RelayRuntimeController",
     "get_runtime_ownership_state_path",
+    "get_runtime_command_path",
+    "get_runtime_command_response_path",
     "load_runtime_ownership_state",
     "write_runtime_ownership_state",
     "cleanup_runtime_ownership_state",
+    "cleanup_runtime_command_files",
     "repair_stale_runtime_ownership_state",
+    "describe_xray_bind_messages",
     "sync_connection_mode_change",
+    "request_running_xray_reload",
 ]

@@ -7,6 +7,7 @@ from src.core.config.app_config import (
     get_app_dir,
     get_connection_mode,
     get_config_port,
+    get_local_proxy_bind_host,
     get_local_proxy_port,
     get_config_string,
     load_config,
@@ -77,24 +78,43 @@ def resolve_runtime_path(relative_or_absolute_path: str) -> str:
     return os.path.normpath(os.path.join(get_app_dir(), relative_or_absolute_path))
 
 
-def get_xray_relay_host() -> str:
-    explicit_relay_host = get_config_string(config, "XRAY_RELAY_HOST", "").strip()
+def get_xray_relay_host(
+    config_override: dict[str, object] | None = None,
+    listen_host: str | None = None,
+) -> str:
+    resolved_config = config if config_override is None else config_override
+    resolved_listen_host = LISTEN_HOST if listen_host is None else listen_host
+
+    explicit_relay_host = get_config_string(resolved_config, "XRAY_RELAY_HOST", "").strip()
     if explicit_relay_host:
         return explicit_relay_host
-    if LISTEN_HOST == "0.0.0.0":
+    if resolved_listen_host == "0.0.0.0":
         return "127.0.0.1"
-    if LISTEN_HOST == "::":
+    if resolved_listen_host == "::":
         return "::1"
-    return LISTEN_HOST
+    return resolved_listen_host
 
 
-def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySettings | None]:
+def _hosts_share_listener_space(left_host: str, right_host: str) -> bool:
+    if left_host == right_host:
+        return True
+    if left_host in {"0.0.0.0", "::"}:
+        return True
+    if right_host in {"0.0.0.0", "::"}:
+        return True
+    return False
+
+
+def build_xray_manager(
+    config_override: dict[str, object] | None = None,
+) -> tuple[XrayProcessManager | None, XrayLocalProxySettings | None]:
     ensure_runtime_settings_loaded()
-    share_url = get_active_xray_share_url(config)
+    resolved_config = config if config_override is None else config_override
+    share_url = get_active_xray_share_url(resolved_config)
     if not share_url:
         return None, None
 
-    connection_mode = get_connection_mode(config)
+    connection_mode = get_connection_mode(resolved_config)
     inbound_mode = (
         XRAY_INBOUND_MODE_TUN
         if connection_mode == "tunnel whole system"
@@ -102,17 +122,23 @@ def build_xray_manager() -> tuple[XrayProcessManager | None, XrayLocalProxySetti
     )
 
     xray_settings = XrayLocalProxySettings(
-        binary_path=resolve_runtime_path(get_config_string(config, "XRAY_BINARY_PATH", os.path.join("xray", "xray.exe"))),
+        binary_path=resolve_runtime_path(
+            get_config_string(resolved_config, "XRAY_BINARY_PATH", os.path.join("xray", "xray.exe"))
+        ),
         mixed_host="127.0.0.1",
-        mixed_port=get_local_proxy_port(config),
-        log_level=get_config_string(config, "XRAY_LOG_LEVEL", "warning"),
+        shared_mixed_host=get_local_proxy_bind_host(resolved_config),
+        mixed_port=get_local_proxy_port(resolved_config),
+        log_level=get_config_string(resolved_config, "XRAY_LOG_LEVEL", "warning"),
         inbound_mode=inbound_mode,
     )
-    if not xray_settings.uses_tun and LISTEN_PORT == xray_settings.mixed_port:
+    if LISTEN_PORT == xray_settings.mixed_port and any(
+        _hosts_share_listener_space(LISTEN_HOST, mixed_host)
+        for mixed_host in xray_settings.mixed_bind_hosts
+    ):
         raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
 
     share_profile = parse_xray_share_url(share_url)
-    relay_host = get_xray_relay_host()
+    relay_host = get_xray_relay_host(resolved_config, LISTEN_HOST)
     xray_config = build_xray_config(share_profile, xray_settings, relay_host, LISTEN_PORT)
     return XrayProcessManager(xray_settings.binary_path, xray_config), xray_settings
 

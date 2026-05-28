@@ -11,7 +11,7 @@ from src.core.config.app_config import get_app_dir, get_asset_path
 
 
 APP_NAME = "RM SNI Spoofer"
-APP_VERSION = "0.0.6"
+APP_VERSION = "0.0.7"
 APP_ROOT = Path(get_app_dir())
 APP_ICON_ICO_PATH = get_asset_path("logo.ico")
 APP_ICON_PNG_PATH = get_asset_path("logo.png")
@@ -245,6 +245,12 @@ def configure_styles(window: tk.Misc, font_families: dict[str, str]) -> None:
         background=THEME["card"],
         foreground=THEME["muted"],
         font=(font_families["body"], 9),
+    )
+    style.configure(
+        "LanShareValue.TLabel",
+        background=THEME["low"],
+        foreground=THEME["accent_text"],
+        font=(font_families["mono"], 11, "bold"),
     )
 
     _configure_button_style(

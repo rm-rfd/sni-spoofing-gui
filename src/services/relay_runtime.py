@@ -9,6 +9,7 @@ import sys
 import tempfile
 
 from src.core.config.app_config import get_app_dir, save_config
+from src.core.runtime.runtime_controller import request_running_xray_reload
 
 LogCallback = Callable[[str], None]
 ExitCallback = Callable[[subprocess.Popen[str], int], None]
@@ -32,6 +33,17 @@ def write_runtime_config(config: dict[str, object]) -> Path:
         runtime_config_path = Path(temp_file.name)
     save_config(config, str(runtime_config_path))
     return runtime_config_path
+
+
+def update_running_runtime_config(
+    runtime_config_path: Path,
+    config: dict[str, object],
+    *,
+    runtime_pid: int,
+    timeout: float = 10.0,
+) -> dict[str, object]:
+    save_config(config, str(runtime_config_path))
+    return request_running_xray_reload(runtime_pid, timeout=timeout)
 
 
 def build_headless_command() -> list[str]:
