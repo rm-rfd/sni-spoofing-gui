@@ -38,6 +38,7 @@ def install_context_menus(panel: tk.Misc) -> None:
 
     panel._profile_context_menu = tk.Menu(panel, tearoff=False)
     panel._profile_context_menu.add_command(label="Copy", command=panel._copy_selected_profiles)
+    panel._profile_context_menu.add_command(label="Paste", command=panel._paste_profiles_from_clipboard)
     panel._profile_context_menu.add_command(label="Remove", command=panel._remove_selected_profiles)
     panel._profile_context_menu.add_command(label="Edit", command=panel._edit_selected_profile)
     panel._profile_context_menu.add_command(label="Set As Active", command=panel._set_selected_profile_active)

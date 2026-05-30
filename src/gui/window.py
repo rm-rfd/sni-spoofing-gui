@@ -667,6 +667,15 @@ class ControlPanel(tk.Tk):
         self.profile_tree.tag_configure("error_profile", foreground=THEME["error"])
         self.profile_tree.bind("<<TreeviewSelect>>", self._on_profile_selection_changed, add="+")
         self.profile_tree.bind("<Double-1>", self._on_profile_double_click, add="+")
+        self.profile_tree.bind("<Control-c>", self._on_profile_tree_copy, add="+")
+        self.profile_tree.bind("<Control-C>", self._on_profile_tree_copy, add="+")
+        self.profile_tree.bind("<Control-v>", self._on_profile_tree_paste, add="+")
+        self.profile_tree.bind("<Control-V>", self._on_profile_tree_paste, add="+")
+        self.profile_tree.bind("<Control-a>", self._on_profile_tree_select_all, add="+")
+        self.profile_tree.bind("<Control-A>", self._on_profile_tree_select_all, add="+")
+        self.profile_tree.bind("<Delete>", self._on_profile_tree_delete, add="+")
+        self.profile_tree.bind("<Return>", self._on_profile_tree_activate, add="+")
+        self.profile_tree.bind("<KP_Enter>", self._on_profile_tree_activate, add="+")
         self.profile_tree.bind("<Configure>", lambda _event: self.after_idle(self._refresh_profile_scrollbars), add="+")
 
         self._profile_scroll_y = profile_scroll_y = ttk.Scrollbar(
@@ -927,6 +936,27 @@ class ControlPanel(tk.Tk):
 
     def _copy_selected_profiles(self) -> None:
         profile_helpers.copy_selected_profiles(self)
+
+    def _paste_profiles_from_clipboard(self) -> None:
+        profile_helpers.paste_profiles_from_clipboard(self)
+
+    def _on_profile_tree_copy(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        self._copy_selected_profiles()
+        return "break"
+
+    def _on_profile_tree_paste(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        self._paste_profiles_from_clipboard()
+        return "break"
+
+    def _on_profile_tree_select_all(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        profile_helpers.select_all_profiles(self)
+        return "break"
+
+    def _on_profile_tree_delete(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        return profile_helpers.handle_profile_tree_delete_key(self)
+
+    def _on_profile_tree_activate(self, _event: tk.Event[tk.Misc] | None = None) -> str:
+        return profile_helpers.handle_profile_tree_activate_key(self)
 
     def _profile_row_values(self, profile: dict[str, object]) -> tuple[str, ...]:
         return profile_helpers.profile_row_values(self, profile)

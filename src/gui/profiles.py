@@ -5,12 +5,14 @@ from typing import Any
 from tkinter import messagebox
 
 from src.core.config.app_config import (
+    build_xray_profile_records,
     get_active_xray_profile,
     get_xray_profiles,
     load_config,
     replace_xray_profiles,
     save_config,
 )
+from src.services import relay_runtime
 
 from .dialogs import ShareUrlDialog
 
@@ -32,12 +34,17 @@ __all__ = [
     "get_selected_profile_ids",
     "sync_profile_action_state",
     "prompt_for_profile",
+    "prompt_for_profiles",
     "persist_profile_state",
     "require_single_selected_profile",
     "add_profile",
     "edit_selected_profile",
     "remove_selected_profiles",
     "set_selected_profile_active",
+    "paste_profiles_from_clipboard",
+    "select_all_profiles",
+    "handle_profile_tree_delete_key",
+    "handle_profile_tree_activate_key",
 ]
 
 
@@ -52,6 +59,13 @@ SORTABLE_COLUMNS: dict[str, int] = {
     "delay": 7,
     "status": 8,
 }
+
+PROFILE_CONTEXT_COPY_INDEX = 0
+PROFILE_CONTEXT_PASTE_INDEX = 1
+PROFILE_CONTEXT_REMOVE_INDEX = 2
+PROFILE_CONTEXT_EDIT_INDEX = 3
+PROFILE_CONTEXT_SET_ACTIVE_INDEX = 4
+PROFILE_CONTEXT_TEST_DELAY_INDEX = 5
 
 
 def copy_selected_profiles(panel: Any) -> None:
@@ -70,6 +84,52 @@ def copy_selected_profiles(panel: Any) -> None:
 
     panel.clipboard_clear()
     panel.clipboard_append("\n".join(profile_urls))
+
+
+def _profile_action_log_message(action: str, profiles: list[dict[str, object]], *, suffix: str = "") -> str:
+    if len(profiles) == 1:
+        return f"[profiles] {action} {profile_label(profiles[0])}{suffix}"
+    return f"[profiles] {action} {len(profiles)} profile(s){suffix}"
+
+
+def _append_profiles(panel: Any, new_profiles: list[dict[str, object]], *, action: str, suffix: str = "") -> None:
+    if not new_profiles:
+        return
+
+    profiles = get_profiles_in_display_order(panel)
+    profiles.extend(dict(profile) for profile in new_profiles)
+    active_profile_id = panel.active_profile_id or str(new_profiles[0]["id"])
+    selected_profile_ids = tuple(str(profile["id"]) for profile in new_profiles)
+    persist_profile_state(
+        panel,
+        profiles,
+        active_profile_id=active_profile_id,
+        selected_profile_ids=selected_profile_ids,
+        log_message=_profile_action_log_message(action, new_profiles, suffix=suffix),
+    )
+
+
+def _should_reload_running_profile_runtime(
+    panel: Any,
+    profiles: list[dict[str, object]],
+    active_profile_id: str,
+) -> bool:
+    if not panel._is_process_running():
+        return False
+
+    previous_active_profile_id = str(panel.active_profile_id)
+    next_active_profile_id = active_profile_id.strip()
+    if previous_active_profile_id != next_active_profile_id:
+        return True
+
+    previous_active_profile = panel.xray_profiles.get(previous_active_profile_id)
+    next_active_profile = next(
+        (profile for profile in profiles if str(profile["id"]) == next_active_profile_id),
+        None,
+    )
+    previous_share_url = "" if previous_active_profile is None else str(previous_active_profile.get("url", "")).strip()
+    next_share_url = "" if next_active_profile is None else str(next_active_profile.get("url", "")).strip()
+    return previous_share_url != next_share_url
 
 
 def profile_row_values(panel: Any, profile: dict[str, object]) -> tuple[str, ...]:
@@ -393,25 +453,39 @@ def show_profile_context_menu(panel: Any, event: tk.Event[tk.Misc]) -> str:
         panel.profile_tree.focus(profile_id)
         panel.profile_tree.see(profile_id)
         update_profile_selection_state(panel)
-    elif not selected_profile_ids:
-        return ""
 
-    is_locked = panel._is_process_running() or panel.delay_test_in_progress
+    is_busy = panel.delay_test_in_progress
     single_profile_selected = len(selected_profile_ids) == 1
     can_set_active = (
-        not is_locked
+        not is_busy
         and single_profile_selected
         and selected_profile_ids[0] != panel.active_profile_id
     )
 
-    panel._profile_context_menu.entryconfigure(0, state="normal")
-    panel._profile_context_menu.entryconfigure(1, state="disabled" if is_locked else "normal")
     panel._profile_context_menu.entryconfigure(
-        2,
-        state="normal" if not is_locked and single_profile_selected else "disabled",
+        PROFILE_CONTEXT_COPY_INDEX,
+        state="normal" if selected_profile_ids else "disabled",
     )
-    panel._profile_context_menu.entryconfigure(3, state="normal" if can_set_active else "disabled")
-    panel._profile_context_menu.entryconfigure(4, state="disabled" if is_locked else "normal")
+    panel._profile_context_menu.entryconfigure(
+        PROFILE_CONTEXT_PASTE_INDEX,
+        state="disabled" if is_busy else "normal",
+    )
+    panel._profile_context_menu.entryconfigure(
+        PROFILE_CONTEXT_REMOVE_INDEX,
+        state="normal" if not is_busy and selected_profile_ids else "disabled",
+    )
+    panel._profile_context_menu.entryconfigure(
+        PROFILE_CONTEXT_EDIT_INDEX,
+        state="normal" if not is_busy and single_profile_selected else "disabled",
+    )
+    panel._profile_context_menu.entryconfigure(
+        PROFILE_CONTEXT_SET_ACTIVE_INDEX,
+        state="normal" if can_set_active else "disabled",
+    )
+    panel._profile_context_menu.entryconfigure(
+        PROFILE_CONTEXT_TEST_DELAY_INDEX,
+        state="normal" if selected_profile_ids and not is_busy else "disabled",
+    )
 
     try:
         panel._profile_context_menu.tk_popup(event.x_root, event.y_root)
@@ -437,11 +511,11 @@ def get_selected_profile_ids(panel: Any) -> tuple[str, ...]:
 
 
 def sync_profile_action_state(panel: Any) -> None:
-    is_locked = panel._is_process_running() or panel.delay_test_in_progress
+    is_busy = panel.delay_test_in_progress
     selected_profile_ids = get_selected_profile_ids(panel)
     single_profile_selected = len(selected_profile_ids) == 1
 
-    if is_locked:
+    if is_busy:
         panel.profile_add_button.state(["disabled"])
         panel.profile_edit_button.state(["disabled"])
         panel.profile_remove_button.state(["disabled"])
@@ -480,6 +554,16 @@ def prompt_for_profile(
     return dialog.result
 
 
+def prompt_for_profiles(panel: Any, title: str) -> list[dict[str, object]] | None:
+    dialog = ShareUrlDialog(panel, title, allow_multiple=True)
+    result = dialog.result
+    if result is None:
+        return None
+    if isinstance(result, list):
+        return [dict(profile) for profile in result]
+    return [dict(result)]
+
+
 def persist_profile_state(
     panel: Any,
     profiles: list[dict[str, object]],
@@ -488,13 +572,28 @@ def persist_profile_state(
     selected_profile_ids: tuple[str, ...] = (),
     log_message: str | None = None,
 ) -> None:
-    config = load_config()
+    is_running = panel._is_process_running()
+    normalized_profiles = [dict(profile) for profile in profiles]
     updated_config = replace_xray_profiles(
-        config,
-        profiles,
+        load_config(),
+        normalized_profiles,
         active_profile_id=active_profile_id,
     )
+
+    if is_running and get_active_xray_profile(updated_config) is None:
+        raise ValueError("Add at least one Xray profile before continuing.")
+
     save_config(updated_config)
+
+    if _should_reload_running_profile_runtime(panel, normalized_profiles, active_profile_id):
+        if panel.process is None or panel.runtime_config_path is None:
+            raise RuntimeError("The running relay runtime config is not available")
+        relay_runtime.update_running_runtime_config(
+            panel.runtime_config_path,
+            updated_config,
+            runtime_pid=panel.process.pid,
+        )
+
     panel._load_profiles_from_config(
         updated_config,
         selected_profile_ids=selected_profile_ids,
@@ -523,22 +622,12 @@ def require_single_selected_profile(panel: Any, action_name: str) -> str | None:
 
 
 def add_profile(panel: Any) -> None:
-    new_profile = prompt_for_profile(panel, "Add Xray Profile")
-    if new_profile is None:
+    new_profiles = prompt_for_profiles(panel, "Add Xray Profile")
+    if new_profiles is None:
         return
 
-    profiles = get_profiles_in_display_order(panel)
-    profiles.append(new_profile)
-    active_profile_id = panel.active_profile_id or str(new_profile["id"])
-
     try:
-        persist_profile_state(
-            panel,
-            profiles,
-            active_profile_id=active_profile_id,
-            selected_profile_ids=(str(new_profile["id"]),),
-            log_message=f"[profiles] added {profile_label(new_profile)}",
-        )
+        _append_profiles(panel, new_profiles, action="added")
     except Exception as exc:
         messagebox.showerror("Failed To Save Profiles", str(exc), parent=panel)
 
@@ -572,7 +661,7 @@ def edit_selected_profile(panel: Any) -> None:
             panel,
             profiles,
             active_profile_id=panel.active_profile_id,
-            selected_profile_ids=(profile_id,),
+            selected_profile_ids=(str(updated_profile["id"]),),
             log_message=f"[profiles] updated {profile_label(updated_profile)}",
         )
         set_profile_delay_state(panel, profile_id)
@@ -640,3 +729,76 @@ def set_selected_profile_active(panel: Any) -> None:
         )
     except Exception as exc:
         messagebox.showerror("Failed To Save Profiles", str(exc), parent=panel)
+
+
+def paste_profiles_from_clipboard(panel: Any) -> None:
+    if panel.delay_test_in_progress:
+        messagebox.showinfo(
+            "Delay Tests Running",
+            "Stop the current delay test before pasting profiles.",
+            parent=panel,
+        )
+        return
+
+    try:
+        share_urls_text = panel.clipboard_get()
+    except tk.TclError:
+        return
+
+    if not str(share_urls_text).strip():
+        return
+
+    try:
+        new_profiles = build_xray_profile_records(str(share_urls_text))
+    except Exception as exc:
+        messagebox.showerror("Invalid Share URL", str(exc), parent=panel)
+        return
+
+    try:
+        _append_profiles(panel, new_profiles, action="pasted", suffix=" from clipboard")
+    except Exception as exc:
+        messagebox.showerror("Failed To Save Profiles", str(exc), parent=panel)
+
+
+def select_all_profiles(panel: Any) -> None:
+    profile_ids = tuple(str(profile_id) for profile_id in panel.profile_tree.get_children(""))
+    if not profile_ids:
+        return
+
+    set_profile_selection(panel, profile_ids)
+    focus_target = next(
+        (profile_id for profile_id in profile_ids if profile_id != panel.active_profile_id),
+        profile_ids[0],
+    )
+    if focus_target:
+        panel.profile_tree.focus(focus_target)
+        panel.profile_tree.see(focus_target)
+    update_profile_selection_state(panel)
+
+
+def handle_profile_tree_delete_key(panel: Any) -> str:
+    if panel.delay_test_in_progress:
+        return "break"
+
+    selected_profile_ids = get_selected_profile_ids(panel)
+    if not selected_profile_ids:
+        focused_profile_id = str(panel.profile_tree.focus())
+        if focused_profile_id in panel.xray_profiles:
+            set_profile_selection(panel, (focused_profile_id,))
+            update_profile_selection_state(panel)
+
+    panel._remove_selected_profiles()
+    return "break"
+
+
+def handle_profile_tree_activate_key(panel: Any) -> str:
+    if panel.delay_test_in_progress:
+        return "break"
+
+    focused_profile_id = str(panel.profile_tree.focus())
+    if focused_profile_id in panel.xray_profiles:
+        set_profile_selection(panel, (focused_profile_id,))
+        update_profile_selection_state(panel)
+
+    panel._set_selected_profile_active()
+    return "break"

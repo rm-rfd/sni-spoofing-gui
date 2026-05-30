@@ -4,7 +4,7 @@ import tkinter as tk
 from typing import Callable
 from tkinter import messagebox, simpledialog, ttk
 
-from src.core.config.app_config import build_xray_profile_record
+from src.core.config.app_config import build_xray_profile_record, build_xray_profile_records
 
 from .theme import THEME, rtl_line
 
@@ -41,10 +41,12 @@ class ShareUrlDialog(simpledialog.Dialog):
         *,
         initial_url: str = "",
         profile_id: str | None = None,
+        allow_multiple: bool = False,
     ) -> None:
         self.initial_url = initial_url
         self.profile_id = profile_id
-        self.result: dict[str, object] | None = None
+        self.allow_multiple = allow_multiple
+        self.result: dict[str, object] | list[dict[str, object]] | None = None
         super().__init__(parent, title)
 
     def body(self, master: tk.Misc) -> tk.Widget:
@@ -59,8 +61,15 @@ class ShareUrlDialog(simpledialog.Dialog):
 
         ttk.Label(
             container,
-            text="Paste a direct vless:// or trojan:// share link.",
+            text=(
+                "Paste one or more direct vless:// or trojan:// share links. "
+                "Each non-empty line becomes a separate profile."
+                if self.allow_multiple
+                else "Paste a direct vless:// or trojan:// share link."
+            ),
             style="Body.TLabel",
+            wraplength=620,
+            justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         self.url_text = tk.Text(
@@ -111,10 +120,13 @@ class ShareUrlDialog(simpledialog.Dialog):
     def validate(self) -> bool:
         share_url = self.url_text.get("1.0", "end").strip()
         try:
-            self.result = build_xray_profile_record(
-                share_url,
-                profile_id=self.profile_id,
-            )
+            if self.allow_multiple:
+                self.result = build_xray_profile_records(share_url)
+            else:
+                self.result = build_xray_profile_record(
+                    share_url,
+                    profile_id=self.profile_id,
+                )
         except Exception as exc:
             messagebox.showerror("Invalid Share URL", str(exc), parent=self)
             return False

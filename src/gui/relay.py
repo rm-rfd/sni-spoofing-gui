@@ -132,7 +132,7 @@ def build_updated_config(
     local_proxy_port = parse_port_value(panel.local_proxy_port_var.get(), "LOCAL_PROXY_PORT")
     log_level = normalize_xray_log_level(panel.log_level_var.get())
     listen_port = get_config_port(config, "LISTEN_PORT", 40443)
-    profiles = panel._get_profiles_in_display_order()
+    resolved_profiles = panel._get_profiles_in_display_order()
     resolved_active_profile_id = panel.active_profile_id if active_profile_id is None else active_profile_id
 
     if not connect_ip:
@@ -142,14 +142,15 @@ def build_updated_config(
     if listen_port == local_proxy_port:
         raise ValueError("LISTEN_PORT must be different from LOCAL_PROXY_PORT")
     if require_active_profile:
-        if not profiles:
+        if not resolved_profiles:
             raise ValueError("Add at least one Xray profile before continuing.")
-        if not resolved_active_profile_id or resolved_active_profile_id not in panel.xray_profiles:
+        resolved_profile_ids = {str(profile["id"]) for profile in resolved_profiles}
+        if not resolved_active_profile_id or resolved_active_profile_id not in resolved_profile_ids:
             raise ValueError("Select an active Xray profile before continuing.")
 
     updated_config = replace_xray_profiles(
         config,
-        profiles,
+        resolved_profiles,
         active_profile_id=resolved_active_profile_id,
     )
     updated_config["CONNECT_IP"] = connect_ip

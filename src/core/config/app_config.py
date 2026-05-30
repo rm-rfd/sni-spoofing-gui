@@ -115,6 +115,20 @@ def build_xray_profile_record(
     }
 
 
+def build_xray_profile_records(share_urls_text: str) -> list[dict[str, Any]]:
+    share_urls = [line.strip() for line in share_urls_text.splitlines() if line.strip()]
+    if not share_urls:
+        raise ValueError("XRAY share URL must not be empty")
+
+    profiles: list[dict[str, Any]] = []
+    for index, share_url in enumerate(share_urls, start=1):
+        try:
+            profiles.append(build_xray_profile_record(share_url))
+        except Exception as exc:
+            raise ValueError(f"Invalid XRAY share URL on line {index}: {exc}") from exc
+    return profiles
+
+
 def get_xray_profiles(config: dict[str, Any]) -> list[dict[str, Any]]:
     normalized_config = normalize_config(config)
     profiles = normalized_config.get(XRAY_PROFILES_KEY, [])
