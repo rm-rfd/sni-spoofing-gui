@@ -98,6 +98,57 @@ def profile_row_tags(panel: Any, profile_id: str) -> tuple[str, ...]:
     return tuple(tags)
 
 
+def sync_profile_selection_state(panel: Any, selection: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    if getattr(panel, "_profile_selection_syncing", False):
+        return getattr(panel, "_selected_profile_ids", ())
+
+    panel._profile_selection_syncing = True
+    try:
+        if selection is None:
+            selection = tuple(str(profile_id) for profile_id in panel.profile_tree.selection())
+
+        logical_selection = tuple(
+            profile_id for profile_id in selection if profile_id in panel.xray_profiles
+        )
+        panel._selected_profile_ids = logical_selection
+
+        active_profile_id = panel.active_profile_id
+        if active_profile_id and active_profile_id in selection:
+            panel.profile_tree.selection_remove(active_profile_id)
+        return logical_selection
+    finally:
+        panel._profile_selection_syncing = False
+
+
+def set_profile_selection(panel: Any, selection: tuple[str, ...]) -> tuple[str, ...]:
+    if getattr(panel, "_profile_selection_syncing", False):
+        return getattr(panel, "_selected_profile_ids", ())
+
+    panel._profile_selection_syncing = True
+    try:
+        logical_selection = tuple(
+            profile_id for profile_id in selection if profile_id in panel.xray_profiles
+        )
+        panel._selected_profile_ids = logical_selection
+
+        tree_selection = tuple(
+            profile_id for profile_id in logical_selection if profile_id != panel.active_profile_id
+        )
+        current_selection = tuple(str(profile_id) for profile_id in panel.profile_tree.selection())
+
+        if tree_selection:
+            panel.profile_tree.selection_set(tree_selection)
+        elif current_selection:
+            panel.profile_tree.selection_remove(current_selection)
+
+        active_profile_id = panel.active_profile_id
+        if active_profile_id and active_profile_id in current_selection:
+            panel.profile_tree.selection_remove(active_profile_id)
+        return logical_selection
+    finally:
+        panel._profile_selection_syncing = False
+
+
 def refresh_profile_row(panel: Any, profile_id: str) -> None:
     profile = panel.xray_profiles.get(profile_id)
     if profile is None or not panel.profile_tree.exists(profile_id):
@@ -274,12 +325,18 @@ def load_profiles_from_config(
     if not resolved_selection and panel.active_profile_id in panel.xray_profiles:
         resolved_selection = (panel.active_profile_id,)
 
-    if resolved_selection:
-        panel.profile_tree.selection_set(resolved_selection)
-        panel.profile_tree.focus(resolved_selection[0])
-        panel.profile_tree.see(resolved_selection[0])
-    else:
-        panel.profile_tree.selection_remove(panel.profile_tree.selection())
+    set_profile_selection(panel, resolved_selection)
+    focus_target = next(
+        (
+            profile_id
+            for profile_id in resolved_selection
+            if profile_id != panel.active_profile_id
+        ),
+        resolved_selection[0] if resolved_selection else "",
+    )
+    if focus_target:
+        panel.profile_tree.focus(focus_target)
+        panel.profile_tree.see(focus_target)
 
     # Re-apply the current sort column if one was active
     sort_column = getattr(panel, "_profile_sort_column", None)
@@ -290,7 +347,7 @@ def load_profiles_from_config(
 
 
 def update_profile_selection_state(panel: Any) -> None:
-    selection = panel.profile_tree.selection()
+    selection = get_selected_profile_ids(panel)
 
     active_profile = panel.xray_profiles.get(panel.active_profile_id)
     if active_profile is None:
@@ -309,6 +366,10 @@ def update_profile_selection_state(panel: Any) -> None:
 
 
 def on_profile_selection_changed(panel: Any, _event: tk.Event[tk.Misc] | None = None) -> None:
+    if getattr(panel, "_profile_selection_syncing", False):
+        return
+
+    sync_profile_selection_state(panel)
     update_profile_selection_state(panel)
 
 
@@ -316,7 +377,7 @@ def on_profile_double_click(panel: Any, event: tk.Event[tk.Misc]) -> str:
     profile_id = panel.profile_tree.identify_row(event.y)
     if not profile_id:
         return ""
-    panel.profile_tree.selection_set((profile_id,))
+    set_profile_selection(panel, (profile_id,))
     panel._edit_selected_profile()
     return "break"
 
@@ -327,7 +388,7 @@ def show_profile_context_menu(panel: Any, event: tk.Event[tk.Misc]) -> str:
 
     if profile_id:
         if profile_id not in selected_profile_ids:
-            panel.profile_tree.selection_set((profile_id,))
+            set_profile_selection(panel, (profile_id,))
             selected_profile_ids = (profile_id,)
         panel.profile_tree.focus(profile_id)
         panel.profile_tree.see(profile_id)
@@ -360,6 +421,14 @@ def show_profile_context_menu(panel: Any, event: tk.Event[tk.Misc]) -> str:
 
 
 def get_selected_profile_ids(panel: Any) -> tuple[str, ...]:
+    selected_profile_ids = getattr(panel, "_selected_profile_ids", ())
+    if selected_profile_ids:
+        return tuple(
+            profile_id
+            for profile_id in selected_profile_ids
+            if profile_id in panel.xray_profiles
+        )
+
     return tuple(
         str(profile_id)
         for profile_id in panel.profile_tree.selection()

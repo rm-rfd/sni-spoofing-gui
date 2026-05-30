@@ -77,6 +77,8 @@ class ControlPanel(tk.Tk):
         self.runtime_config_path: Path | None = None
         self.xray_profiles: dict[str, dict[str, object]] = {}
         self.active_profile_id = ""
+        self._selected_profile_ids: tuple[str, ...] = ()
+        self._profile_selection_syncing = False
         self.profile_delay_values: dict[str, str] = {}
         self.profile_delay_statuses: dict[str, str] = {}
         self.profile_delay_states: dict[str, str] = {}

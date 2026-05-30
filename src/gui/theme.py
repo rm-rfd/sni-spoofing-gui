@@ -32,6 +32,7 @@ THEME = {
     "muted_alt": "#e2bfb0",
     "border": "#5a4136",
     "input_border": "#333333",
+    "profile_selection": "#2a2c2e",
     "selection": "#3a2a21",
     "accent_soft": "#2b1d15",
     "success": "#16a34a",
@@ -365,7 +366,7 @@ def configure_styles(window: tk.Misc, font_families: dict[str, str]) -> None:
     )
     style.map(
         "Profiles.Treeview",
-        background=[("selected", THEME["selection"])],
+        background=[("selected", THEME["profile_selection"])],
         foreground=[("selected", THEME["text"])],
     )
     style.configure(
