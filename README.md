@@ -1,3 +1,4 @@
+<img width="1280" height="869" alt="image" src="https://github.com/user-attachments/assets/1432ffe0-9047-4fc3-a287-d85d8ea42de2" />
 # RM SNI Spoofer
 
 This project is built on top of the work by Patterniha: https://github.com/patterniha/SNI-Spoofing. Big thanks for the original idea and code that inspired this repository.
